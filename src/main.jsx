@@ -1,0 +1,1178 @@
+import React, { useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  BarChart3,
+  Boxes,
+  Calculator,
+  ClipboardList,
+  ExternalLink,
+  FileText,
+  IceCreamBowl,
+  LayoutDashboard,
+  LogOut,
+  PackagePlus,
+  ReceiptText,
+  Truck,
+  Users
+} from "lucide-react";
+import { supabase, supabaseEnabled } from "./supabaseClient";
+import "./styles.css";
+
+const modules = [
+  { id: "dashboard", label: "Inicio", title: "Resumen general", icon: LayoutDashboard },
+  { id: "clientes", label: "Clientes", title: "Clientes", icon: Users },
+  { id: "productos", label: "Productos", title: "Productos", icon: IceCreamBowl },
+  { id: "pedidos", label: "Pedidos", title: "Pedidos", icon: ClipboardList },
+  { id: "inventario", label: "Inventario", title: "Inventario", icon: Boxes },
+  { id: "entregas", label: "Entregas", title: "Entregas", icon: Truck },
+  { id: "facturacion", label: "Facturacion", title: "Facturacion", icon: ReceiptText },
+  { id: "contabilidad", label: "Contabilidad", title: "Contabilidad general", icon: Calculator },
+  { id: "reportes", label: "Reportes", title: "Reportes", icon: BarChart3 }
+];
+
+const emptyData = {
+  clientes: [],
+  productos: [],
+  pedidos: [],
+  inventario: [],
+  entregas: [],
+  facturas: [],
+  cuentas: [],
+  asientos: [],
+  lineas: []
+};
+
+const examples = {
+  clientes: [{ nombre: "Ejemplo: Pulperia La Central", telefono: "2222-0000", zona: "San Jose" }],
+  productos: [{ nombre: "Ejemplo: Yogurt fresa 1L", categoria: "Yogurt", precio: 1850 }],
+  inventario: [{ lote: "YOG-001", fecha_creacion: "2026-05-20", fecha_vencimiento: "2026-06-20", cantidad: 24 }],
+  factura: { cliente_nombre: "Ejemplo: Pulperia La Central", numero: "F-0001", monto: 22200, estado: "Pendiente" },
+  cuentas: [
+    { codigo: "1-01", nombre: "Caja", tipo: "Activo" },
+    { codigo: "4-01", nombre: "Ventas", tipo: "Ingreso" },
+    { codigo: "5-01", nombre: "Materia prima", tipo: "Gasto" }
+  ]
+};
+
+const initialForms = {
+  cliente: { nombre: "", telefono: "", zona: "", tipo: "Minorista" },
+  producto: { nombre: "", categoria: "Yogurt", precio: "", stock_minimo: "0", stock_inicial: "0", lote: "" },
+  pedido: { cliente_nombre: "", producto_id: "", producto_nombre: "", cantidad: "", estado: "Pendiente" },
+  inventario: {
+    producto_id: "",
+    producto_nombre: "",
+    tipo: "Entrada",
+    cantidad: "",
+    lote: "",
+    fecha_creacion: "",
+    fecha_vencimiento: "",
+    motivo: ""
+  },
+  entrega: { cliente_nombre: "", ruta: "", fecha_entrega: "", estado: "Programada" },
+  factura: { pedido_id: "", cliente_nombre: "", numero: "", monto: "", estado: "Borrador" },
+  cuenta: { codigo: "", nombre: "", tipo: "Activo" },
+  asiento: {
+    fecha: "",
+    referencia: "",
+    descripcion: "",
+    cuenta_debe: "",
+    monto_debe: "",
+    cuenta_haber: "",
+    monto_haber: ""
+  }
+};
+
+function App() {
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [active, setActive] = useState("dashboard");
+  const [loading, setLoading] = useState(false);
+  const [notice, setNotice] = useState("");
+  const [data, setData] = useState(emptyData);
+  const [forms, setForms] = useState(initialForms);
+
+  useEffect(() => {
+    if (loggedIn) loadAll();
+  }, [loggedIn]);
+
+  const totals = useMemo(() => {
+    const totalFacturado = sum(data.facturas, "monto");
+    const pendiente = sum(data.facturas.filter((item) => item.estado !== "Pagada"), "monto");
+    const ingresos = accountingTotal(data, "Ingreso");
+    const gastos = accountingTotal(data, "Gasto");
+    return {
+      totalFacturado,
+      pendiente,
+      ingresos,
+      gastos,
+      utilidad: ingresos - gastos
+    };
+  }, [data]);
+
+  async function loadAll() {
+    setLoading(true);
+    setNotice("");
+
+    if (!supabaseEnabled) {
+      setData(emptyData);
+      setNotice("Conecta Supabase en .env para guardar datos reales. Por ahora todo inicia en cero.");
+      setLoading(false);
+      return;
+    }
+
+    const requests = await Promise.all([
+      supabase.from("clientes").select("*").order("created_at", { ascending: false }),
+      supabase.from("productos").select("*").order("created_at", { ascending: false }),
+      supabase.from("pedidos").select("*").order("created_at", { ascending: false }),
+      supabase.from("inventario_movimientos").select("*").order("created_at", { ascending: false }),
+      supabase.from("entregas").select("*").order("created_at", { ascending: false }),
+      supabase.from("facturas").select("*").order("created_at", { ascending: false }),
+      supabase.from("contabilidad_cuentas").select("*").order("codigo", { ascending: true }),
+      supabase.from("contabilidad_asientos").select("*").order("fecha", { ascending: false }),
+      supabase.from("contabilidad_lineas").select("*")
+    ]);
+
+    const hasError = requests.find((result) => result.error);
+    if (hasError) {
+      setNotice(`Supabase respondio: ${hasError.error.message}`);
+    }
+
+    setData({
+      clientes: requests[0].data || [],
+      productos: requests[1].data || [],
+      pedidos: requests[2].data || [],
+      inventario: requests[3].data || [],
+      entregas: requests[4].data || [],
+      facturas: requests[5].data || [],
+      cuentas: requests[6].data || [],
+      asientos: requests[7].data || [],
+      lineas: requests[8].data || []
+    });
+    setLoading(false);
+  }
+
+  async function insertRecord(table, payload, formKey) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para guardar. El formulario queda como ejemplo mientras el backend no este configurado.");
+      return;
+    }
+
+    const { error } = await supabase.from(table).insert(payload);
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    setForms((current) => ({ ...current, [formKey]: initialForms[formKey] }));
+    await loadAll();
+  }
+
+  async function createProduct(event) {
+    event.preventDefault();
+    const form = forms.producto;
+
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para guardar productos e inventario.");
+      return;
+    }
+
+    const { data: product, error } = await supabase
+      .from("productos")
+      .insert({
+        nombre: form.nombre,
+        categoria: form.categoria,
+        precio: Number(form.precio),
+        stock_minimo: Number(form.stock_minimo)
+      })
+      .select()
+      .single();
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    const initialStock = Number(form.stock_inicial || 0);
+    if (initialStock > 0) {
+      const { error: inventoryError } = await supabase.from("inventario_movimientos").insert({
+        producto_id: product.id,
+        producto_nombre: product.nombre,
+        tipo: "Entrada",
+        cantidad: initialStock,
+        lote: form.lote,
+        fecha_creacion: new Date().toISOString().slice(0, 10),
+        motivo: "Stock inicial"
+      });
+
+      if (inventoryError) {
+        setNotice(inventoryError.message);
+        return;
+      }
+    }
+
+    setForms((current) => ({ ...current, producto: initialForms.producto }));
+    await loadAll();
+  }
+
+  async function createOrder(event) {
+    event.preventDefault();
+    const form = forms.pedido;
+    const product = data.productos.find((item) => item.id === form.producto_id);
+    const quantity = Number(form.cantidad);
+
+    if (!product) {
+      setNotice("Selecciona un producto para crear el pedido.");
+      return;
+    }
+
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para guardar pedidos y descontar inventario.");
+      return;
+    }
+
+    const available = getProductStock(data.inventario, product.id);
+    if (available <= 0) {
+      setNotice(`No hay inventario disponible para ${product.nombre}.`);
+      return;
+    }
+
+    if (available < quantity) {
+      setNotice(`Inventario insuficiente para ${product.nombre}. Disponible: ${available}, solicitado: ${quantity}.`);
+      return;
+    }
+
+    const { error } = await supabase.from("pedidos").insert({
+      cliente_nombre: form.cliente_nombre,
+      producto_id: product.id,
+      producto_nombre: product.nombre,
+      cantidad: quantity,
+      monto: Number(product.precio || 0) * quantity,
+      estado: form.estado
+    });
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    const { error: inventoryError } = await supabase.from("inventario_movimientos").insert({
+      producto_id: product.id,
+      producto_nombre: product.nombre,
+      tipo: "Salida",
+      cantidad: quantity,
+      motivo: `Venta a ${form.cliente_nombre}`
+    });
+
+    if (inventoryError) {
+      setNotice(inventoryError.message);
+      return;
+    }
+
+    setForms((current) => ({ ...current, pedido: initialForms.pedido }));
+    setNotice("Pedido creado e inventario descontado.");
+    await loadAll();
+  }
+
+  async function createAccountingEntry(event) {
+    event.preventDefault();
+    const form = forms.asiento;
+    const debit = Number(form.monto_debe);
+    const credit = Number(form.monto_haber);
+
+    if (debit !== credit) {
+      setNotice("El asiento no cuadra: el debe y el haber deben tener el mismo monto.");
+      return;
+    }
+
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para guardar asientos contables reales.");
+      return;
+    }
+
+    const { data: asiento, error } = await supabase
+      .from("contabilidad_asientos")
+      .insert({
+        fecha: form.fecha,
+        referencia: form.referencia,
+        descripcion: form.descripcion,
+        total_debe: debit,
+        total_haber: credit,
+        estado: "Borrador"
+      })
+      .select()
+      .single();
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    const { error: linesError } = await supabase.from("contabilidad_lineas").insert([
+      { asiento_id: asiento.id, cuenta_id: form.cuenta_debe, debe: debit, haber: 0 },
+      { asiento_id: asiento.id, cuenta_id: form.cuenta_haber, debe: 0, haber: credit }
+    ]);
+
+    if (linesError) {
+      setNotice(linesError.message);
+      return;
+    }
+
+    setForms((current) => ({ ...current, asiento: initialForms.asiento }));
+    await loadAll();
+  }
+
+  async function createInvoiceFromOrder(order) {
+    const amount = Number(order.monto || 0) || Number(order.cantidad || 0);
+    const nextNumber = String(data.facturas.length + 1).padStart(4, "0");
+    const payload = {
+      pedido_id: order.id,
+      cliente_id: order.cliente_id || null,
+      cliente_nombre: order.cliente_nombre,
+      numero: `F-${nextNumber}`,
+      monto: amount,
+      estado: "Borrador"
+    };
+
+    await insertRecord("facturas", payload, "factura");
+    setNotice("Factura borrador creada desde pedido.");
+  }
+
+  async function createAccountingFromInvoice(invoice) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para crear el asiento contable de la factura.");
+      return;
+    }
+
+    const cashAccount = data.cuentas.find((account) => account.tipo === "Activo");
+    const salesAccount = data.cuentas.find((account) => account.tipo === "Ingreso");
+
+    if (!cashAccount || !salesAccount) {
+      setNotice("Crea al menos una cuenta Activo y una cuenta Ingreso antes de contabilizar facturas.");
+      return;
+    }
+
+    const amount = Number(invoice.monto || 0);
+    const { data: asiento, error } = await supabase
+      .from("contabilidad_asientos")
+      .insert({
+        fecha: invoice.fecha || new Date().toISOString().slice(0, 10),
+        referencia: invoice.numero || invoice.id,
+        descripcion: `Factura ${invoice.numero || ""} - ${invoice.cliente_nombre || "cliente"}`,
+        total_debe: amount,
+        total_haber: amount,
+        estado: "Borrador",
+        factura_id: invoice.id
+      })
+      .select()
+      .single();
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    const { error: lineError } = await supabase.from("contabilidad_lineas").insert([
+      { asiento_id: asiento.id, cuenta_id: cashAccount.id, debe: amount, haber: 0, descripcion: "Cuenta por cobrar / caja" },
+      { asiento_id: asiento.id, cuenta_id: salesAccount.id, debe: 0, haber: amount, descripcion: "Ingreso por venta" }
+    ]);
+
+    if (lineError) {
+      setNotice(lineError.message);
+      return;
+    }
+
+    setNotice("Asiento contable creado desde la factura.");
+    await loadAll();
+  }
+
+  function setForm(formKey, field, value) {
+    setForms((current) => ({
+      ...current,
+      [formKey]: { ...current[formKey], [field]: value }
+    }));
+  }
+
+  if (!loggedIn) {
+    return <Login onLogin={() => setLoggedIn(true)} />;
+  }
+
+  const current = modules.find((item) => item.id === active);
+
+  return (
+    <main className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <span>G</span>
+          <div>
+            <strong>Gumapa</strong>
+            <small>Yogurt y helados</small>
+          </div>
+        </div>
+        <nav>
+          {modules.map((item) => {
+            const Icon = item.icon;
+            return (
+              <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => setActive(item.id)}>
+                <Icon size={18} />
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+        <button className="logout" onClick={() => setLoggedIn(false)}>
+          <LogOut size={18} />
+          Salir
+        </button>
+      </aside>
+
+      <section className="workspace">
+        <header className="topbar">
+          <div>
+            <p>{supabaseEnabled ? "Supabase conectado" : "Modo plantilla"}</p>
+            <h1>{current.title}</h1>
+          </div>
+          <button className="secondary" onClick={loadAll} disabled={loading}>
+            {loading ? "Cargando..." : "Actualizar"}
+          </button>
+        </header>
+
+        {notice && <div className="notice">{notice}</div>}
+
+        <section className="content">
+          {active === "dashboard" && <Dashboard data={data} totals={totals} />}
+          {active === "clientes" && (
+            <SimpleModule
+              title="Nuevo cliente"
+              form={forms.cliente}
+              onChange={(field, value) => setForm("cliente", field, value)}
+              onSubmit={(payload) => insertRecord("clientes", payload, "cliente")}
+              fields={[
+                ["nombre", "Nombre"],
+                ["telefono", "Telefono"],
+                ["zona", "Zona"],
+                ["tipo", "Tipo"]
+              ]}
+              rows={data.clientes}
+              example={examples.clientes[0]}
+            />
+          )}
+          {active === "productos" && (
+            <Products data={data} form={forms.producto} setForm={setForm} createProduct={createProduct} />
+          )}
+          {active === "pedidos" && (
+            <Orders
+              data={data}
+              form={forms.pedido}
+              setForm={setForm}
+              createOrder={createOrder}
+              createInvoiceFromOrder={createInvoiceFromOrder}
+            />
+          )}
+          {active === "inventario" && (
+            <Inventory
+              data={data}
+              form={forms.inventario}
+              setForm={setForm}
+              insertRecord={insertRecord}
+            />
+          )}
+          {active === "entregas" && (
+            <SimpleModule
+              title="Nueva entrega"
+              form={forms.entrega}
+              onChange={(field, value) => setForm("entrega", field, value)}
+              onSubmit={(payload) => insertRecord("entregas", payload, "entrega")}
+              fields={[
+                ["cliente_nombre", "Cliente"],
+                ["ruta", "Ruta"],
+                ["fecha_entrega", "Fecha", "date"],
+                ["estado", "Estado"]
+              ]}
+              rows={data.entregas}
+            />
+          )}
+          {active === "facturacion" && (
+            <Billing
+              data={data}
+              form={forms.factura}
+              setForm={setForm}
+              insertRecord={insertRecord}
+              createAccountingFromInvoice={createAccountingFromInvoice}
+            />
+          )}
+          {active === "contabilidad" && (
+            <Accounting
+              data={data}
+              totals={totals}
+              forms={forms}
+              setForm={setForm}
+              createAccountingEntry={createAccountingEntry}
+              insertRecord={insertRecord}
+            />
+          )}
+          {active === "reportes" && <Reports data={data} totals={totals} />}
+        </section>
+      </section>
+    </main>
+  );
+}
+
+function Login({ onLogin }) {
+  const [user, setUser] = useState("admin");
+  const [password, setPassword] = useState("1234");
+  const [error, setError] = useState("");
+
+  function submit(event) {
+    event.preventDefault();
+    if (user === "admin" && password === "1234") {
+      onLogin();
+      return;
+    }
+    setError("Usuario o contrasena incorrectos.");
+  }
+
+  return (
+    <main className="login-shell">
+      <form className="login-card" onSubmit={submit}>
+        <div className="brand large">
+          <span>G</span>
+          <div>
+            <strong>Gumapa</strong>
+            <small>Sistema administrativo</small>
+          </div>
+        </div>
+        <label>
+          Usuario
+          <input value={user} onChange={(event) => setUser(event.target.value)} />
+        </label>
+        <label>
+          Contrasena
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+        </label>
+        {error && <p className="error">{error}</p>}
+        <button className="primary">Ingresar</button>
+        <small>Demo local: admin / 1234</small>
+      </form>
+    </main>
+  );
+}
+
+function Dashboard({ data, totals }) {
+  return (
+    <>
+      <Kpis
+        items={[
+          ["Clientes", data.clientes.length],
+          ["Productos", data.productos.length],
+          ["Facturado", money(totals.totalFacturado)],
+          ["Utilidad", money(totals.utilidad)]
+        ]}
+      />
+      <div className="grid two">
+        <Panel title="Operacion">
+          <Record title="Pedidos" detail={`${data.pedidos.length} pedidos registrados`} status="0 inicial" />
+          <Record title="Entregas" detail={`${data.entregas.length} rutas registradas`} status="0 inicial" />
+          <Record title="Inventario" detail={`${data.inventario.length} movimientos`} status="0 inicial" />
+        </Panel>
+        <Panel title="Finanzas">
+          <Record title="Pendiente de cobro" detail={money(totals.pendiente)} status="Facturas" tone="warn" />
+          <Record title="Ingresos contables" detail={money(totals.ingresos)} status="Debe/Haber" />
+          <Record title="Gastos contables" detail={money(totals.gastos)} status="Control" tone="warn" />
+        </Panel>
+      </div>
+    </>
+  );
+}
+
+function SimpleModule({ title, form, fields, onChange, onSubmit, rows, example }) {
+  function submit(event) {
+    event.preventDefault();
+    onSubmit(form);
+  }
+
+  return (
+    <div className="grid two">
+      <Panel title={title}>
+        <form className="form" onSubmit={submit}>
+          {fields.map(([name, label, type = "text"]) => (
+            <label key={name}>
+              {label}
+              <input type={type} value={form[name] || ""} onChange={(event) => onChange(name, event.target.value)} required />
+            </label>
+          ))}
+          <button className="primary">Guardar</button>
+        </form>
+        {example && <Example item={example} />}
+      </Panel>
+      <Panel title="Registros">
+        <Rows rows={rows} />
+      </Panel>
+    </div>
+  );
+}
+
+function Products({ data, form, setForm, createProduct }) {
+  return (
+    <div className="grid two">
+      <Panel title="Nuevo producto">
+        <form className="form" onSubmit={createProduct}>
+          <label>
+            Nombre
+            <input value={form.nombre} onChange={(event) => setForm("producto", "nombre", event.target.value)} required />
+          </label>
+          <div className="split">
+            <label>
+              Categoria
+              <select value={form.categoria} onChange={(event) => setForm("producto", "categoria", event.target.value)}>
+                <option value="Yogurt">Yogurt</option>
+                <option value="Helados">Helados</option>
+              </select>
+            </label>
+            <label>
+              Precio
+              <input type="number" value={form.precio} onChange={(event) => setForm("producto", "precio", event.target.value)} required />
+            </label>
+          </div>
+          <div className="split">
+            <label>
+              Stock minimo
+              <input type="number" value={form.stock_minimo} onChange={(event) => setForm("producto", "stock_minimo", event.target.value)} required />
+            </label>
+            <label>
+              Stock inicial
+              <input type="number" value={form.stock_inicial} onChange={(event) => setForm("producto", "stock_inicial", event.target.value)} />
+            </label>
+          </div>
+          <label>
+            Lote inicial
+            <input value={form.lote} onChange={(event) => setForm("producto", "lote", event.target.value)} />
+          </label>
+          <button className="primary">Guardar producto</button>
+        </form>
+        <Example item={examples.productos[0]} />
+      </Panel>
+      <Panel title="Productos">
+        {!data.productos.length && <div className="empty">Sin productos todavia. Agrega yogurt o helados para empezar inventario.</div>}
+        <div className="rows">
+          {data.productos.map((product) => {
+            const stock = getProductStock(data.inventario, product.id);
+            const isEmpty = stock <= 0;
+            const isLow = !isEmpty && stock <= Number(product.stock_minimo || 0);
+            const tone = isEmpty || isLow ? "warn" : "";
+            return (
+              <Record
+                key={product.id}
+                title={product.nombre}
+                detail={`${product.categoria} - ${money(product.precio)} - Stock: ${stock}`}
+                status={isEmpty ? "Sin stock" : isLow ? "Bajo" : "Disponible"}
+                tone={tone}
+              />
+            );
+          })}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder }) {
+  const selectedProduct = data.productos.find((item) => item.id === form.producto_id);
+  const selectedStock = selectedProduct ? getProductStock(data.inventario, selectedProduct.id) : 0;
+  const requestedQuantity = Number(form.cantidad || 0);
+  const remainingStock = selectedStock - requestedQuantity;
+  const stockMinimum = Number(selectedProduct?.stock_minimo || 0);
+  const hasStockWarning = selectedProduct && requestedQuantity > 0 && remainingStock < 0;
+  const hasLowStockWarning = selectedProduct && requestedQuantity > 0 && remainingStock >= 0 && remainingStock <= stockMinimum;
+
+  function selectProduct(productId) {
+    const product = data.productos.find((item) => item.id === productId);
+    setForm("pedido", "producto_id", productId);
+    setForm("pedido", "producto_nombre", product?.nombre || "");
+  }
+
+  return (
+    <div className="grid two">
+      <Panel title="Nuevo pedido">
+        <form className="form" onSubmit={createOrder}>
+          <label>
+            Cliente
+            <input value={form.cliente_nombre} onChange={(event) => setForm("pedido", "cliente_nombre", event.target.value)} required />
+          </label>
+          <label>
+            Producto
+            <select value={form.producto_id} onChange={(event) => selectProduct(event.target.value)} required>
+              <option value="">Selecciona producto</option>
+              {data.productos.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.nombre} - {product.categoria} - stock {getProductStock(data.inventario, product.id)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {selectedProduct && (
+            <div className={`inventory-alert ${hasStockWarning ? "danger" : hasLowStockWarning ? "warn" : ""}`}>
+              <strong>Inventario disponible: {selectedStock}</strong>
+              <span>
+                {requestedQuantity > 0
+                  ? hasStockWarning
+                    ? `No alcanza. Faltan ${Math.abs(remainingStock)} unidades.`
+                    : `Despues del pedido quedarian ${remainingStock} unidades.`
+                  : "Indica la cantidad para calcular el inventario restante."}
+              </span>
+            </div>
+          )}
+          <div className="split">
+            <label>
+              Cantidad
+              <input type="number" value={form.cantidad} onChange={(event) => setForm("pedido", "cantidad", event.target.value)} required />
+            </label>
+            <label>
+              Estado
+              <input value={form.estado} onChange={(event) => setForm("pedido", "estado", event.target.value)} required />
+            </label>
+          </div>
+          <button className="primary" disabled={hasStockWarning}>Guardar pedido</button>
+        </form>
+      </Panel>
+      <Panel title="Pedidos enlazables">
+        {!data.pedidos.length && <div className="empty">Sin pedidos todavia. Cuando exista un pedido, podras crear su factura desde aqui.</div>}
+        <div className="rows">
+          {data.pedidos.map((order) => (
+            <article className="record" key={order.id}>
+              <div>
+                <strong>{order.cliente_nombre || "Pedido"}</strong>
+                <p>{compact(order)}</p>
+              </div>
+              <div className="actions">
+                <button className="secondary" type="button" onClick={() => createInvoiceFromOrder(order)}>
+                  <FileText size={16} />
+                  Facturar
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function Inventory({ data, form, setForm, insertRecord }) {
+  function submit(event) {
+    event.preventDefault();
+    const product = data.productos.find((item) => item.id === form.producto_id);
+    insertRecord(
+      "inventario_movimientos",
+      {
+        ...form,
+        producto_nombre: product?.nombre || form.producto_nombre,
+        cantidad: Number(form.cantidad)
+      },
+      "inventario"
+    );
+  }
+
+  function selectProduct(productId) {
+    const product = data.productos.find((item) => item.id === productId);
+    setForm("inventario", "producto_id", productId);
+    setForm("inventario", "producto_nombre", product?.nombre || "");
+  }
+
+  return (
+    <div className="grid two">
+      <Panel title="Nuevo movimiento">
+        <form className="form" onSubmit={submit}>
+          <label>
+            Producto
+            <select value={form.producto_id || ""} onChange={(event) => selectProduct(event.target.value)} required>
+              <option value="">Selecciona producto</option>
+              {data.productos.map((product) => (
+                <option key={product.id} value={product.id}>
+                  {product.nombre} - {product.categoria}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="split">
+            <label>
+              Tipo
+              <select value={form.tipo} onChange={(event) => setForm("inventario", "tipo", event.target.value)}>
+                {["Entrada", "Salida", "Ajuste"].map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </label>
+            <label>
+              Cantidad
+              <input type="number" value={form.cantidad} onChange={(event) => setForm("inventario", "cantidad", event.target.value)} required />
+            </label>
+          </div>
+          <label>
+            Lote
+            <input value={form.lote} onChange={(event) => setForm("inventario", "lote", event.target.value)} required />
+          </label>
+          <div className="split">
+            <label>
+              Fecha de creacion
+              <input type="date" value={form.fecha_creacion} onChange={(event) => setForm("inventario", "fecha_creacion", event.target.value)} required />
+            </label>
+            <label>
+              Fecha de vencimiento
+              <input type="date" value={form.fecha_vencimiento} onChange={(event) => setForm("inventario", "fecha_vencimiento", event.target.value)} required />
+            </label>
+          </div>
+          <label>
+            Motivo
+            <input value={form.motivo} onChange={(event) => setForm("inventario", "motivo", event.target.value)} />
+          </label>
+          <button className="primary">Guardar inventario</button>
+        </form>
+        <Example item={examples.inventario[0]} />
+      </Panel>
+      <Panel title="Movimientos de inventario">
+        <div className="stock-summary">
+          {data.productos.map((product) => (
+            <Record
+              key={product.id}
+              title={product.nombre}
+              detail={`${product.categoria} - stock actual ${getProductStock(data.inventario, product.id)}`}
+              status="Stock"
+            />
+          ))}
+        </div>
+        <Rows rows={data.inventario} />
+      </Panel>
+    </div>
+  );
+}
+
+function Billing({ data, form, setForm, insertRecord, createAccountingFromInvoice }) {
+  const selectedOrder = data.pedidos.find((order) => order.id === form.pedido_id);
+
+  function submit(event) {
+    event.preventDefault();
+    insertRecord(
+      "facturas",
+      {
+        ...form,
+        monto: Number(form.monto)
+      },
+      "factura"
+    );
+  }
+
+  function applyOrder(orderId) {
+    const order = data.pedidos.find((item) => item.id === orderId);
+    setForm("factura", "pedido_id", orderId);
+    if (!order) return;
+    setForm("factura", "cliente_nombre", order.cliente_nombre || "");
+    setForm("factura", "monto", String(Number(order.monto || 0) || Number(order.cantidad || 0)));
+  }
+
+  return (
+    <>
+      <div className="grid two">
+        <Panel title="Nueva factura">
+          <form className="form" onSubmit={submit}>
+            <label>
+              Pedido relacionado
+              <select value={form.pedido_id} onChange={(event) => applyOrder(event.target.value)}>
+                <option value="">Sin pedido</option>
+                {data.pedidos.map((order) => (
+                  <option key={order.id} value={order.id}>
+                    {order.cliente_nombre || "Pedido"} - {order.producto_nombre || "producto"}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Cliente
+              <input value={form.cliente_nombre} onChange={(event) => setForm("factura", "cliente_nombre", event.target.value)} required />
+            </label>
+            <div className="split">
+              <label>
+                Numero
+                <input value={form.numero} onChange={(event) => setForm("factura", "numero", event.target.value)} required />
+              </label>
+              <label>
+                Monto
+                <input type="number" value={form.monto} onChange={(event) => setForm("factura", "monto", event.target.value)} required />
+              </label>
+            </div>
+            <div className="split">
+              <label>
+                Estado
+                <select value={form.estado} onChange={(event) => setForm("factura", "estado", event.target.value)}>
+                  {["Borrador", "Pendiente", "Pagada", "Anulada"].map((item) => <option key={item}>{item}</option>)}
+                </select>
+              </label>
+            </div>
+            <button className="primary">Guardar factura</button>
+          </form>
+          {selectedOrder && <Example item={{ enlace: "Pedido seleccionado", pedido: selectedOrder.cliente_nombre, producto: selectedOrder.producto_nombre }} />}
+          <Example item={examples.factura} />
+        </Panel>
+
+        <Panel title="Sistema externo de facturas">
+          <div className="link-list">
+            <a href="https://ovitribucr.hacienda.go.cr/home/" target="_blank" rel="noreferrer">
+              <ExternalLink size={16} />
+              OviTributCR
+            </a>
+          </div>
+          <div className="empty">
+            Este sistema conserva pedidos, facturas internas y contabilidad. Para emitir facturas electronicas, abre OviTribuCR desde este enlace.
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Facturas enlazadas">
+        {!data.facturas.length && <div className="empty">Sin facturas todavia. Puedes crearlas desde pedidos o manualmente.</div>}
+        <div className="rows">
+          {data.facturas.map((invoice) => (
+            <article className="record" key={invoice.id}>
+              <div>
+                <strong>{invoice.numero || invoice.cliente_nombre || "Factura"}</strong>
+                <p>{compact(invoice)}</p>
+              </div>
+              <div className="actions">
+                <button className="secondary" type="button" onClick={() => createAccountingFromInvoice(invoice)}>
+                  <Calculator size={16} />
+                  Contabilizar
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </Panel>
+    </>
+  );
+}
+
+function Accounting({ data, totals, forms, setForm, createAccountingEntry, insertRecord }) {
+  return (
+    <>
+      <Kpis
+        items={[
+          ["Ingresos", money(totals.ingresos)],
+          ["Gastos", money(totals.gastos)],
+          ["Utilidad neta", money(totals.utilidad)],
+          ["Asientos", data.asientos.length]
+        ]}
+      />
+      <div className="grid two">
+        <Panel title="Catalogo de cuentas">
+          <form
+            className="form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              insertRecord("contabilidad_cuentas", forms.cuenta, "cuenta");
+            }}
+          >
+            <label>
+              Codigo
+              <input value={forms.cuenta.codigo} onChange={(event) => setForm("cuenta", "codigo", event.target.value)} required />
+            </label>
+            <label>
+              Nombre
+              <input value={forms.cuenta.nombre} onChange={(event) => setForm("cuenta", "nombre", event.target.value)} required />
+            </label>
+            <label>
+              Tipo
+              <select value={forms.cuenta.tipo} onChange={(event) => setForm("cuenta", "tipo", event.target.value)}>
+                {["Activo", "Pasivo", "Patrimonio", "Ingreso", "Gasto", "Costo"].map((item) => (
+                  <option key={item}>{item}</option>
+                ))}
+              </select>
+            </label>
+            <button className="primary">Crear cuenta</button>
+          </form>
+          <Example item={examples.cuentas[0]} />
+        </Panel>
+
+        <Panel title="Asiento contable">
+          <form className="form" onSubmit={createAccountingEntry}>
+            <label>
+              Fecha
+              <input type="date" value={forms.asiento.fecha} onChange={(event) => setForm("asiento", "fecha", event.target.value)} required />
+            </label>
+            <label>
+              Referencia
+              <input value={forms.asiento.referencia} onChange={(event) => setForm("asiento", "referencia", event.target.value)} required />
+            </label>
+            <label>
+              Descripcion
+              <input value={forms.asiento.descripcion} onChange={(event) => setForm("asiento", "descripcion", event.target.value)} required />
+            </label>
+            <div className="split">
+              <label>
+                Cuenta debe
+                <select value={forms.asiento.cuenta_debe} onChange={(event) => setForm("asiento", "cuenta_debe", event.target.value)} required>
+                  <option value="">Seleccione</option>
+                  {data.cuentas.map((cuenta) => (
+                    <option key={cuenta.id} value={cuenta.id}>
+                      {cuenta.codigo} - {cuenta.nombre}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Monto debe
+                <input type="number" value={forms.asiento.monto_debe} onChange={(event) => setForm("asiento", "monto_debe", event.target.value)} required />
+              </label>
+            </div>
+            <div className="split">
+              <label>
+                Cuenta haber
+                <select value={forms.asiento.cuenta_haber} onChange={(event) => setForm("asiento", "cuenta_haber", event.target.value)} required>
+                  <option value="">Seleccione</option>
+                  {data.cuentas.map((cuenta) => (
+                    <option key={cuenta.id} value={cuenta.id}>
+                      {cuenta.codigo} - {cuenta.nombre}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Monto haber
+                <input type="number" value={forms.asiento.monto_haber} onChange={(event) => setForm("asiento", "monto_haber", event.target.value)} required />
+              </label>
+            </div>
+            <button className="primary">Guardar asiento</button>
+          </form>
+        </Panel>
+      </div>
+      <div className="grid two">
+        <Panel title="Cuentas">
+          <Rows rows={data.cuentas} />
+        </Panel>
+        <Panel title="Asientos">
+          <Rows rows={data.asientos} />
+        </Panel>
+      </div>
+    </>
+  );
+}
+
+function Reports({ data, totals }) {
+  return (
+    <>
+      <Kpis
+        items={[
+          ["Ventas", money(totals.totalFacturado)],
+          ["Cobro pendiente", money(totals.pendiente)],
+          ["Utilidad", money(totals.utilidad)],
+          ["Cuentas", data.cuentas.length]
+        ]}
+      />
+      <Panel title="Estado rapido de resultados">
+        <div className="statement">
+          <span>Ingresos</span>
+          <strong>{money(totals.ingresos)}</strong>
+          <span>Gastos y costos</span>
+          <strong>{money(totals.gastos)}</strong>
+          <span>Resultado neto</span>
+          <strong>{money(totals.utilidad)}</strong>
+        </div>
+      </Panel>
+    </>
+  );
+}
+
+function Kpis({ items }) {
+  return (
+    <section className="kpis">
+      {items.map(([label, value]) => (
+        <article className="kpi" key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </article>
+      ))}
+    </section>
+  );
+}
+
+function Panel({ title, children }) {
+  return (
+    <section className="panel">
+      <h2>{title}</h2>
+      {children}
+    </section>
+  );
+}
+
+function Rows({ rows }) {
+  if (!rows.length) {
+    return <div className="empty">Sin registros todavia. Los totales quedan en 0 hasta conectar Supabase y guardar datos.</div>;
+  }
+
+  return (
+    <div className="rows">
+      {rows.map((row) => (
+        <Record key={row.id || JSON.stringify(row)} title={row.nombre || row.numero || row.referencia || row.cliente_nombre || "Registro"} detail={compact(row)} status={row.estado || row.tipo || "Activo"} />
+      ))}
+    </div>
+  );
+}
+
+function Record({ title, detail, status, tone = "" }) {
+  return (
+    <article className="record">
+      <div>
+        <strong>{title}</strong>
+        <p>{detail}</p>
+      </div>
+      <span className={`pill ${tone}`}>{status}</span>
+    </article>
+  );
+}
+
+function Example({ item }) {
+  return (
+    <div className="example">
+      <PackagePlus size={16} />
+      <span>Ejemplo: {compact(item)}</span>
+    </div>
+  );
+}
+
+function sum(rows, field) {
+  return rows.reduce((total, item) => total + Number(item[field] || 0), 0);
+}
+
+function accountingTotal(data, type) {
+  const accountIds = new Set(data.cuentas.filter((cuenta) => cuenta.tipo === type).map((cuenta) => cuenta.id));
+  return data.lineas
+    .filter((linea) => accountIds.has(linea.cuenta_id))
+    .reduce((total, linea) => total + Math.abs(Number(linea.haber || 0) - Number(linea.debe || 0)), 0);
+}
+
+function getProductStock(movements, productId) {
+  return movements
+    .filter((movement) => movement.producto_id === productId)
+    .reduce((total, movement) => {
+      const quantity = Number(movement.cantidad || 0);
+      if (movement.tipo === "Entrada") return total + quantity;
+      if (movement.tipo === "Salida") return total - quantity;
+      return total + quantity;
+    }, 0);
+}
+
+function money(value) {
+  return new Intl.NumberFormat("es-CR", {
+    style: "currency",
+    currency: "CRC",
+    maximumFractionDigits: 0
+  }).format(value || 0);
+}
+
+function compact(row) {
+  return Object.entries(row)
+    .filter(([key, value]) => !["id", "created_at", "updated_at"].includes(key) && value !== null && value !== "")
+    .slice(0, 4)
+    .map(([key, value]) => `${labelize(key)}: ${value}`)
+    .join(" · ");
+}
+
+function labelize(key) {
+  return key.replaceAll("_", " ");
+}
+
+createRoot(document.getElementById("root")).render(<App />);
