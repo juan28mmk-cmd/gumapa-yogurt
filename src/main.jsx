@@ -517,13 +517,15 @@ function App() {
 }
 
 function Login({ onLogin }) {
-  const [user, setUser] = useState("admin");
-  const [password, setPassword] = useState("1234");
+  const loginUser = import.meta.env.VITE_APP_LOGIN_USER || "gumapa";
+  const loginPassword = import.meta.env.VITE_APP_LOGIN_PASSWORD || "gumapa2026";
+  const [user, setUser] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
   function submit(event) {
     event.preventDefault();
-    if (user === "" && password === "") {
+    if (user === loginUser && password === loginPassword) {
       onLogin();
       return;
     }
@@ -542,15 +544,14 @@ function Login({ onLogin }) {
         </div>
         <label>
           Usuario
-          <input value={user} onChange={(event) => setUser(event.target.value)} />
+          <input value={user} onChange={(event) => setUser(event.target.value)} autoComplete="username" />
         </label>
         <label>
           Contrasena
-          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+          <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" />
         </label>
         {error && <p className="error">{error}</p>}
         <button className="primary">Ingresar</button>
-        <small>Login</small>
       </form>
     </main>
   );
