@@ -113,6 +113,11 @@ button:disabled {
   grid-template-columns: 270px 1fr;
 }
 
+.mobile-menu-button,
+.menu-backdrop {
+  display: none;
+}
+
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -436,44 +441,138 @@ select:focus {
     grid-template-columns: 1fr;
   }
 
+  .mobile-menu-button {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    z-index: 6;
+    display: grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    background: var(--green-dark);
+    color: white;
+    box-shadow: 0 10px 30px rgba(31, 47, 45, 0.18);
+  }
+
+  .menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 4;
+    display: block;
+    background: rgba(18, 28, 27, 0.42);
+  }
+
   .sidebar {
-    position: sticky;
+    position: fixed;
     top: 0;
-    z-index: 3;
+    left: 0;
+    z-index: 5;
+    width: min(280px, 86vw);
+    height: 100vh;
+    transform: translateX(-100%);
+    transition: transform 180ms ease;
+    box-shadow: var(--shadow);
+  }
+
+  .sidebar.open {
+    transform: translateX(0);
   }
 
   .sidebar nav {
-    grid-auto-flow: column;
-    grid-auto-columns: max-content;
-    overflow-x: auto;
+    grid-auto-flow: row;
+    grid-auto-columns: unset;
+    overflow-x: visible;
+    overflow-y: auto;
+    padding-bottom: 18px;
   }
 
   .logout {
-    display: none !important;
+    display: flex !important;
   }
 
   .grid.two {
     grid-template-columns: 1fr;
   }
+
+  .topbar {
+    padding-left: 68px;
+  }
 }
 
 @media (max-width: 720px) {
   .topbar {
-    align-items: flex-start;
-    flex-direction: column;
-    padding: 18px;
+    align-items: center;
+    flex-direction: row;
+    padding: 12px 12px 12px 64px;
+  }
+
+  .topbar h1 {
+    font-size: 19px;
+  }
+
+  .topbar p {
+    font-size: 11px;
+  }
+
+  .topbar .secondary {
+    min-height: 36px;
+    padding: 0 10px;
+    font-size: 13px;
   }
 
   .content {
-    padding: 18px;
+    gap: 12px;
+    padding: 12px;
   }
 
   .notice {
-    margin: 18px 18px 0;
+    margin: 12px 12px 0;
+    padding: 10px 12px;
+    font-size: 13px;
   }
 
   .kpis {
     grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .kpi {
+    padding: 12px;
+  }
+
+  .kpi strong {
+    font-size: 20px;
+  }
+
+  .panel {
+    padding: 12px;
+  }
+
+  .panel h2 {
+    margin-bottom: 12px;
+    font-size: 15px;
+  }
+
+  .form {
+    gap: 10px;
+  }
+
+  input,
+  select {
+    height: 38px;
+  }
+
+  .primary,
+  .secondary {
+    min-height: 38px;
+  }
+
+  .record {
+    padding: 12px;
+    gap: 8px;
   }
 
   .split,
@@ -488,6 +587,14 @@ select:focus {
 
 @media (max-width: 480px) {
   .kpis {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .brand {
+    padding: 14px;
+  }
+
+  .sidebar button {
+    min-height: 40px;
   }
 }

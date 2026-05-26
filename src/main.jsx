@@ -10,6 +10,7 @@ import {
   IceCreamBowl,
   LayoutDashboard,
   LogOut,
+  Menu,
   PackagePlus,
   ReceiptText,
   Truck,
@@ -85,6 +86,7 @@ const initialForms = {
 function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [active, setActive] = useState("dashboard");
+  const [menuOpen, setMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState("");
   const [data, setData] = useState(emptyData);
@@ -397,9 +399,18 @@ function App() {
 
   const current = modules.find((item) => item.id === active);
 
+  function openView(viewId) {
+    setActive(viewId);
+    setMenuOpen(false);
+  }
+
   return (
-    <main className="app-shell">
-      <aside className="sidebar">
+    <main className={`app-shell ${menuOpen ? "menu-open" : ""}`}>
+      <button className="mobile-menu-button" type="button" onClick={() => setMenuOpen(true)} aria-label="Abrir menu">
+        <Menu size={22} />
+      </button>
+      {menuOpen && <button className="menu-backdrop" type="button" onClick={() => setMenuOpen(false)} aria-label="Cerrar menu" />}
+      <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
         <div className="brand">
           <span>G</span>
           <div>
@@ -411,14 +422,17 @@ function App() {
           {modules.map((item) => {
             const Icon = item.icon;
             return (
-              <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => setActive(item.id)}>
+              <button key={item.id} className={active === item.id ? "active" : ""} onClick={() => openView(item.id)}>
                 <Icon size={18} />
                 {item.label}
               </button>
             );
           })}
         </nav>
-        <button className="logout" onClick={() => setLoggedIn(false)}>
+        <button className="logout" onClick={() => {
+          setMenuOpen(false);
+          setLoggedIn(false);
+        }}>
           <LogOut size={18} />
           Salir
         </button>
