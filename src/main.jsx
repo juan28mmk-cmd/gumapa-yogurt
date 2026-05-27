@@ -38,6 +38,7 @@ const emptyData = {
   inventario: [],
   entregas: [],
   facturas: [],
+  gastos: [],
   cuentas: [],
   asientos: [],
   lineas: []
@@ -71,6 +72,7 @@ const initialForms = {
   },
   entrega: { cliente_nombre: "", ruta: "", fecha_entrega: "", estado: "Programada" },
   factura: { pedido_id: "", cliente_id: "", cliente_nombre: "", numero: "", monto: "", estado: "Borrador" },
+  gasto: { fecha: "", proveedor: "", categoria: "Gasto general", descripcion: "", monto: "", metodo_pago: "Caja/Banco" },
   cuenta: { codigo: "", nombre: "", tipo: "Activo" },
   asiento: {
     fecha: "",
@@ -128,6 +130,7 @@ function App() {
       supabase.from("inventario_movimientos").select("*").order("created_at", { ascending: false }),
       supabase.from("entregas").select("*").order("created_at", { ascending: false }),
       supabase.from("facturas").select("*").order("created_at", { ascending: false }),
+      supabase.from("gastos").select("*").order("created_at", { ascending: false }),
       supabase.from("contabilidad_cuentas").select("*").order("codigo", { ascending: true }),
       supabase.from("contabilidad_asientos").select("*").order("fecha", { ascending: false }),
       supabase.from("contabilidad_lineas").select("*")
@@ -145,9 +148,10 @@ function App() {
       inventario: requests[3].data || [],
       entregas: requests[4].data || [],
       facturas: requests[5].data || [],
-      cuentas: requests[6].data || [],
-      asientos: requests[7].data || [],
-      lineas: requests[8].data || []
+      gastos: requests[6].data || [],
+      cuentas: requests[7].data || [],
+      asientos: requests[8].data || [],
+      lineas: requests[9].data || []
     });
     setLoading(false);
   }
@@ -345,60 +349,151 @@ function App() {
     setNotice("Factura borrador creada desde pedido.");
   }
 
-  async function createAccountingFromInvoice(invoice, shouldReload = true) {
-    if (!supabaseEnabled) {
-      setNotice("Conecta Supabase para crear el asiento contable de la factura.");
-      return;
+  async function ensureDefaultAccounts() {
+    if (!supabaseEnabled) return null;
+
+    const defaults = [
+      { codigo: "1-01", nombre: "Caja/Banco", tipo: "Activo" },
+      { codigo: "1-02", nombre: "Cuentas por cobrar", tipo: "Activo" },
+      { codigo: "4-01", nombre: "Ventas", tipo: "Ingreso" },
+      { codigo: "6-01", nombre: "Gasto general", tipo: "Gasto" }
+    ];
+
+    const { data: existing, error } = await supabase
+      .from("contabilidad_cuentas")
+      .select("*")
+      .in("codigo", defaults.map((account) => account.codigo));
+
+    if (error) {
+      setNotice(error.message);
+      return null;
     }
 
-    const cashAccount = data.cuentas.find((account) => account.tipo === "Activo");
-    const salesAccount = data.cuentas.find((account) => account.tipo === "Ingreso");
+    const existingCodes = new Set((existing || []).map((account) => account.codigo));
+    const missing = defaults.filter((account) => !existingCodes.has(account.codigo));
 
-    if (!cashAccount || !salesAccount) {
-      setNotice("Crea al menos una cuenta Activo y una cuenta Ingreso antes de contabilizar facturas.");
-      return;
+    let inserted = [];
+    if (missing.length) {
+      const { data: insertedRows, error: insertError } = await supabase
+        .from("contabilidad_cuentas")
+        .insert(missing)
+        .select();
+
+      if (insertError) {
+        setNotice(insertError.message);
+        return null;
+      }
+      inserted = insertedRows || [];
     }
 
-    const alreadyAccounted = data.asientos.some((entry) => entry.factura_id === invoice.id);
-    if (alreadyAccounted) {
-      if (shouldReload) setNotice("Esta factura ya tiene un asiento contable enlazado.");
-      return;
-    }
+    return [...(existing || []), ...inserted].reduce((map, account) => {
+      map[account.codigo] = account;
+      return map;
+    }, {});
+  }
 
-    const amount = Number(invoice.monto || 0);
+  async function createEntry({ fecha, referencia, descripcion, factura_id = null, gasto_id = null, debitAccount, creditAccount, amount }) {
     const { data: asiento, error } = await supabase
       .from("contabilidad_asientos")
       .insert({
-        fecha: invoice.fecha || new Date().toISOString().slice(0, 10),
-        referencia: invoice.numero || invoice.id,
-        descripcion: `Factura ${invoice.numero || ""} - ${invoice.cliente_nombre || "cliente"}`,
+        fecha: fecha || new Date().toISOString().slice(0, 10),
+        referencia,
+        descripcion,
         total_debe: amount,
         total_haber: amount,
-        estado: "Borrador",
-        factura_id: invoice.id
+        estado: "Automatico",
+        factura_id,
+        gasto_id
       })
       .select()
       .single();
 
     if (error) {
       setNotice(error.message);
-      return;
+      return null;
     }
 
     const { error: lineError } = await supabase.from("contabilidad_lineas").insert([
-      { asiento_id: asiento.id, cuenta_id: cashAccount.id, debe: amount, haber: 0, descripcion: "Cuenta por cobrar / caja" },
-      { asiento_id: asiento.id, cuenta_id: salesAccount.id, debe: 0, haber: amount, descripcion: "Ingreso por venta" }
+      { asiento_id: asiento.id, cuenta_id: debitAccount.id, debe: amount, haber: 0, descripcion },
+      { asiento_id: asiento.id, cuenta_id: creditAccount.id, debe: 0, haber: amount, descripcion }
     ]);
 
     if (lineError) {
       setNotice(lineError.message);
+      return null;
+    }
+
+    return asiento;
+  }
+
+  async function createAccountingFromInvoice(invoice, shouldReload = true) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para crear el asiento contable de la factura.");
       return;
     }
+
+    const accounts = await ensureDefaultAccounts();
+    if (!accounts) return;
+
+    const debitAccount = invoice.estado === "Pagada" ? accounts["1-01"] : accounts["1-02"];
+    const salesAccount = accounts["4-01"];
+
+    const alreadyAccounted = data.asientos.some((entry) => entry.factura_id === invoice.id && String(entry.referencia || "").startsWith("VENTA-"));
+    if (alreadyAccounted) {
+      if (shouldReload) setNotice("Esta factura ya tiene un asiento contable enlazado.");
+      return;
+    }
+
+    const amount = Number(invoice.monto || 0);
+    await createEntry({
+      fecha: invoice.fecha,
+      referencia: `VENTA-${invoice.numero || invoice.id}`,
+      descripcion: `Venta ${invoice.numero || ""} - ${invoice.cliente_nombre || "cliente"}`,
+      factura_id: invoice.id,
+      debitAccount,
+      creditAccount: salesAccount,
+      amount
+    });
 
     if (shouldReload) {
       setNotice("Asiento contable creado desde la factura.");
       await loadAll();
     }
+  }
+
+  async function markInvoicePaid(invoice) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para marcar facturas como pagadas.");
+      return;
+    }
+
+    const accounts = await ensureDefaultAccounts();
+    if (!accounts) return;
+
+    const alreadyPaid = data.asientos.some((entry) => entry.factura_id === invoice.id && String(entry.referencia || "").startsWith("PAGO-"));
+
+    const { error } = await supabase.from("facturas").update({ estado: "Pagada" }).eq("id", invoice.id);
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    await createAccountingFromInvoice({ ...invoice, estado: "Pendiente" }, false);
+
+    if (!alreadyPaid && invoice.estado !== "Pagada") {
+      await createEntry({
+        fecha: new Date().toISOString().slice(0, 10),
+        referencia: `PAGO-${invoice.numero || invoice.id}`,
+        descripcion: `Pago de factura ${invoice.numero || ""}`,
+        factura_id: invoice.id,
+        debitAccount: accounts["1-01"],
+        creditAccount: accounts["1-02"],
+        amount: Number(invoice.monto || 0)
+      });
+    }
+
+    setNotice("Factura marcada como pagada y pago contabilizado.");
+    await loadAll();
   }
 
   async function createInvoice(payload, resetForm = true) {
@@ -421,6 +516,9 @@ function App() {
     if (invoice.estado === "Pagada") {
       await createAccountingFromInvoice(invoice, false);
       setNotice("Factura pagada creada y contabilizada como ingreso.");
+    } else if (invoice.estado === "Pendiente") {
+      await createAccountingFromInvoice(invoice, false);
+      setNotice("Factura pendiente creada y registrada en cuentas por cobrar.");
     } else {
       setNotice("Factura creada.");
     }
@@ -480,6 +578,78 @@ function App() {
     }
 
     setNotice("Factura eliminada junto con su asiento contable enlazado.");
+    await loadAll();
+  }
+
+  async function createExpense(event) {
+    event.preventDefault();
+    const form = forms.gasto;
+
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para guardar gastos.");
+      return;
+    }
+
+    const accounts = await ensureDefaultAccounts();
+    if (!accounts) return;
+
+    const amount = Number(form.monto || 0);
+    const { data: gasto, error } = await supabase
+      .from("gastos")
+      .insert({ ...form, monto: amount, fecha: form.fecha || new Date().toISOString().slice(0, 10) })
+      .select()
+      .single();
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    await createEntry({
+      fecha: gasto.fecha,
+      referencia: `GASTO-${gasto.id}`,
+      descripcion: `${gasto.categoria}: ${gasto.descripcion || gasto.proveedor || "gasto"}`,
+      gasto_id: gasto.id,
+      debitAccount: accounts["6-01"],
+      creditAccount: accounts["1-01"],
+      amount
+    });
+
+    setForms((current) => ({ ...current, gasto: initialForms.gasto }));
+    setNotice("Gasto registrado y contabilizado.");
+    await loadAll();
+  }
+
+  async function deleteExpense(gasto) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para eliminar gastos.");
+      return;
+    }
+
+    const entries = data.asientos.filter((entry) => entry.gasto_id === gasto.id);
+    const entryIds = entries.map((entry) => entry.id);
+
+    if (entryIds.length) {
+      const { error: lineError } = await supabase.from("contabilidad_lineas").delete().in("asiento_id", entryIds);
+      if (lineError) {
+        setNotice(lineError.message);
+        return;
+      }
+    }
+
+    const { error: entryError } = await supabase.from("contabilidad_asientos").delete().eq("gasto_id", gasto.id);
+    if (entryError) {
+      setNotice(entryError.message);
+      return;
+    }
+
+    const { error } = await supabase.from("gastos").delete().eq("id", gasto.id);
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    setNotice("Gasto eliminado junto con su asiento.");
     await loadAll();
   }
 
@@ -645,6 +815,7 @@ function App() {
               setForm={setForm}
               createInvoice={createInvoice}
               createAccountingFromInvoice={createAccountingFromInvoice}
+              markInvoicePaid={markInvoicePaid}
               deleteInvoice={deleteInvoice}
             />
           )}
@@ -656,6 +827,8 @@ function App() {
               setForm={setForm}
               createAccountingEntry={createAccountingEntry}
               insertRecord={insertRecord}
+              createExpense={createExpense}
+              deleteExpense={deleteExpense}
             />
           )}
           {active === "reportes" && <Reports data={data} totals={totals} />}
@@ -1064,7 +1237,7 @@ function Inventory({ data, form, setForm, insertRecord }) {
   );
 }
 
-function Billing({ data, form, setForm, createInvoice, createAccountingFromInvoice, deleteInvoice }) {
+function Billing({ data, form, setForm, createInvoice, createAccountingFromInvoice, markInvoicePaid, deleteInvoice }) {
   const selectedOrder = data.pedidos.find((order) => order.id === form.pedido_id);
 
   function submit(event) {
@@ -1165,6 +1338,11 @@ function Billing({ data, form, setForm, createInvoice, createAccountingFromInvoi
                   <Calculator size={16} />
                   Contabilizar
                 </button>
+                {invoice.estado !== "Pagada" && (
+                  <button className="secondary" type="button" onClick={() => markInvoicePaid(invoice)}>
+                    Pagada
+                  </button>
+                )}
                 <button className="secondary danger-button" type="button" onClick={() => deleteInvoice(invoice)}>
                   Eliminar
                 </button>
@@ -1177,7 +1355,7 @@ function Billing({ data, form, setForm, createInvoice, createAccountingFromInvoi
   );
 }
 
-function Accounting({ data, totals, forms, setForm, createAccountingEntry, insertRecord }) {
+function Accounting({ data, totals, forms, setForm, createAccountingEntry, insertRecord, createExpense, deleteExpense }) {
   return (
     <>
       <Kpis
@@ -1188,6 +1366,63 @@ function Accounting({ data, totals, forms, setForm, createAccountingEntry, inser
           ["Asientos", data.asientos.length]
         ]}
       />
+      <div className="grid two">
+        <Panel title="Gasto rapido">
+          <form className="form" onSubmit={createExpense}>
+            <div className="split">
+              <label>
+                Fecha
+                <input type="date" value={forms.gasto.fecha} onChange={(event) => setForm("gasto", "fecha", event.target.value)} />
+              </label>
+              <label>
+                Monto
+                <input type="number" value={forms.gasto.monto} onChange={(event) => setForm("gasto", "monto", event.target.value)} required />
+              </label>
+            </div>
+            <label>
+              Proveedor
+              <input value={forms.gasto.proveedor} onChange={(event) => setForm("gasto", "proveedor", event.target.value)} />
+            </label>
+            <div className="split">
+              <label>
+                Categoria
+                <select value={forms.gasto.categoria} onChange={(event) => setForm("gasto", "categoria", event.target.value)}>
+                  {["Gasto general", "Materia prima", "Transporte", "Servicios", "Alquiler", "Planilla"].map((item) => <option key={item}>{item}</option>)}
+                </select>
+              </label>
+              <label>
+                Metodo de pago
+                <select value={forms.gasto.metodo_pago} onChange={(event) => setForm("gasto", "metodo_pago", event.target.value)}>
+                  {["Caja/Banco", "Efectivo", "Transferencia", "Tarjeta"].map((item) => <option key={item}>{item}</option>)}
+                </select>
+              </label>
+            </div>
+            <label>
+              Descripcion
+              <input value={forms.gasto.descripcion} onChange={(event) => setForm("gasto", "descripcion", event.target.value)} />
+            </label>
+            <button className="primary">Guardar gasto</button>
+          </form>
+        </Panel>
+        <Panel title="Gastos registrados">
+          {!data.gastos.length && <div className="empty">Sin gastos todavia.</div>}
+          <div className="rows">
+            {data.gastos.map((gasto) => (
+              <article className="record" key={gasto.id}>
+                <div>
+                  <strong>{gasto.categoria}</strong>
+                  <p>{compact(gasto)}</p>
+                </div>
+                <div className="actions">
+                  <button className="secondary danger-button" type="button" onClick={() => deleteExpense(gasto)}>
+                    Eliminar
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        </Panel>
+      </div>
       <div className="grid two">
         <Panel title="Catalogo de cuentas">
           <form

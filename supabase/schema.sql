@@ -75,6 +75,18 @@ create table if not exists facturas (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists gastos (
+  id uuid primary key default gen_random_uuid(),
+  fecha date not null default current_date,
+  proveedor text,
+  categoria text not null default 'Gasto general',
+  descripcion text,
+  monto numeric(12,2) not null default 0,
+  metodo_pago text not null default 'Caja/Banco',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 create table if not exists contabilidad_cuentas (
   id uuid primary key default gen_random_uuid(),
   codigo text not null unique,
@@ -99,6 +111,7 @@ create table if not exists contabilidad_asientos (
   fecha date not null default current_date,
   referencia text,
   factura_id uuid references facturas(id),
+  gasto_id uuid references gastos(id),
   descripcion text not null,
   total_debe numeric(12,2) not null default 0,
   total_haber numeric(12,2) not null default 0,
@@ -125,6 +138,7 @@ alter table pedidos enable row level security;
 alter table inventario_movimientos enable row level security;
 alter table entregas enable row level security;
 alter table facturas enable row level security;
+alter table gastos enable row level security;
 alter table contabilidad_cuentas enable row level security;
 alter table contabilidad_periodos enable row level security;
 alter table contabilidad_asientos enable row level security;
@@ -146,7 +160,11 @@ create policy "anon_select_entregas" on entregas for select using (true);
 create policy "anon_insert_entregas" on entregas for insert with check (true);
 create policy "anon_select_facturas" on facturas for select using (true);
 create policy "anon_insert_facturas" on facturas for insert with check (true);
+create policy "anon_update_facturas" on facturas for update using (true) with check (true);
 create policy "anon_delete_facturas" on facturas for delete using (true);
+create policy "anon_select_gastos" on gastos for select using (true);
+create policy "anon_insert_gastos" on gastos for insert with check (true);
+create policy "anon_delete_gastos" on gastos for delete using (true);
 create policy "anon_select_cuentas" on contabilidad_cuentas for select using (true);
 create policy "anon_insert_cuentas" on contabilidad_cuentas for insert with check (true);
 create policy "anon_select_periodos" on contabilidad_periodos for select using (true);

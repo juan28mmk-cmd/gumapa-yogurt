@@ -116,6 +116,15 @@ Las facturas se pueden contabilizar desde el modulo de facturacion, creando un a
 Si una factura se crea con estado `Pagada`, el sistema crea automaticamente el asiento de ingreso.
 Para que eliminar facturas/clientes funcione en Supabase, ejecuta la migracion `supabase/migrations/20260526_inventario_y_facturas.sql`.
 
+Automatizaciones contables incluidas:
+
+- Crea cuentas base si no existen: Caja/Banco, Cuentas por cobrar, Ventas y Gasto general.
+- Factura `Pendiente`: registra venta contra cuentas por cobrar.
+- Factura `Pagada`: registra ingreso contra Caja/Banco.
+- Boton `Pagada`: registra el cobro de una factura pendiente.
+- Gasto rapido: registra gasto y asiento automatico.
+- Eliminar gasto/factura: elimina tambien sus asientos relacionados.
+
 ## GitHub
 
 ```bash
