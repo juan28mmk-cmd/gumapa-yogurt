@@ -697,6 +697,52 @@ function App() {
     await loadAll();
   }
 
+  async function deleteProduct(product) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para eliminar productos.");
+      return;
+    }
+
+    const { error: inventoryError } = await supabase
+      .from("inventario_movimientos")
+      .delete()
+      .eq("producto_id", product.id);
+
+    if (inventoryError) {
+      setNotice(inventoryError.message);
+      return;
+    }
+
+    const { error: ordersError } = await supabase
+      .from("pedidos")
+      .update({ producto_id: null })
+      .eq("producto_id", product.id);
+
+    if (ordersError) {
+      setNotice(ordersError.message);
+      return;
+    }
+
+    const { data: deletedRows, error } = await supabase
+      .from("productos")
+      .delete()
+      .eq("id", product.id)
+      .select("id");
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    if (!deletedRows?.length) {
+      setNotice("No se elimino el producto. Revisa permisos DELETE en Supabase.");
+      return;
+    }
+
+    setNotice("Producto eliminado junto con sus movimientos de inventario.");
+    await loadAll();
+  }
+
   function setForm(formKey, field, value) {
     setForms((current) => ({
       ...current,
@@ -774,7 +820,7 @@ function App() {
             />
           )}
           {active === "productos" && (
-            <Products data={data} form={forms.producto} setForm={setForm} createProduct={createProduct} />
+            <Products data={data} form={forms.producto} setForm={setForm} createProduct={createProduct} deleteProduct={deleteProduct} />
           )}
           {active === "pedidos" && (
             <Orders
@@ -987,7 +1033,7 @@ function Clients({ form, setForm, insertRecord, rows, deleteClient }) {
   );
 }
 
-function Products({ data, form, setForm, createProduct }) {
+function Products({ data, form, setForm, createProduct, deleteProduct }) {
   return (
     <div className="grid two">
       <Panel title="Nuevo producto">
@@ -1036,13 +1082,18 @@ function Products({ data, form, setForm, createProduct }) {
             const isLow = !isEmpty && stock <= Number(product.stock_minimo || 0);
             const tone = isEmpty || isLow ? "warn" : "";
             return (
-              <Record
-                key={product.id}
-                title={product.nombre}
-                detail={`${product.categoria} - ${money(product.precio)} - Stock: ${stock}`}
-                status={isEmpty ? "Sin stock" : isLow ? "Bajo" : "Disponible"}
-                tone={tone}
-              />
+              <article className="record" key={product.id}>
+                <div>
+                  <strong>{product.nombre}</strong>
+                  <p>{product.categoria} - {money(product.precio)} - Stock: {stock}</p>
+                </div>
+                <div className="actions">
+                  <span className={`pill ${tone}`}>{isEmpty ? "Sin stock" : isLow ? "Bajo" : "Disponible"}</span>
+                  <button className="secondary danger-button" type="button" onClick={() => deleteProduct(product)}>
+                    Eliminar
+                  </button>
+                </div>
+              </article>
             );
           })}
         </div>
