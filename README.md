@@ -92,6 +92,7 @@ El sistema maneja facturas internas simples enlazadas con pedidos y contabilidad
 - Crear factura manual.
 - Crear factura desde pedido.
 - Contabilizar factura.
+- Eliminar factura y su asiento contable enlazado.
 - Abrir OviTribuCR para emitir la factura electronica fuera del sistema.
 
 Enlace usado en la app:
@@ -112,6 +113,7 @@ La contabilidad usa estructura de doble partida:
 Cada asiento debe cuadrar: total debe igual a total haber.
 
 Las facturas se pueden contabilizar desde el modulo de facturacion, creando un asiento enlazado a la factura.
+Si una factura se crea con estado `Pagada`, el sistema crea automaticamente el asiento de ingreso.
 
 ## GitHub
 

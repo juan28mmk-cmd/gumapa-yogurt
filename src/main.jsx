@@ -58,7 +58,7 @@ const examples = {
 const initialForms = {
   cliente: { nombre: "", telefono: "", zona: "", tipo: "Minorista" },
   producto: { nombre: "", categoria: "Yogurt", precio: "", stock_minimo: "0", stock_inicial: "0", lote: "" },
-  pedido: { cliente_nombre: "", producto_id: "", producto_nombre: "", cantidad: "", estado: "Pendiente" },
+  pedido: { cliente_id: "", cliente_nombre: "", producto_id: "", producto_nombre: "", cantidad: "", estado: "Pendiente" },
   inventario: {
     producto_id: "",
     producto_nombre: "",
@@ -70,7 +70,7 @@ const initialForms = {
     motivo: ""
   },
   entrega: { cliente_nombre: "", ruta: "", fecha_entrega: "", estado: "Programada" },
-  factura: { pedido_id: "", cliente_nombre: "", numero: "", monto: "", estado: "Borrador" },
+  factura: { pedido_id: "", cliente_id: "", cliente_nombre: "", numero: "", monto: "", estado: "Borrador" },
   cuenta: { codigo: "", nombre: "", tipo: "Activo" },
   asiento: {
     fecha: "",
@@ -218,8 +218,14 @@ function App() {
   async function createOrder(event) {
     event.preventDefault();
     const form = forms.pedido;
+    const client = data.clientes.find((item) => item.id === form.cliente_id);
     const product = data.productos.find((item) => item.id === form.producto_id);
     const quantity = Number(form.cantidad);
+
+    if (!client) {
+      setNotice("Selecciona un cliente para crear el pedido.");
+      return;
+    }
 
     if (!product) {
       setNotice("Selecciona un producto para crear el pedido.");
@@ -243,7 +249,8 @@ function App() {
     }
 
     const { error } = await supabase.from("pedidos").insert({
-      cliente_nombre: form.cliente_nombre,
+      cliente_id: client.id,
+      cliente_nombre: client.nombre,
       producto_id: product.id,
       producto_nombre: product.nombre,
       cantidad: quantity,
@@ -261,7 +268,7 @@ function App() {
       producto_nombre: product.nombre,
       tipo: "Salida",
       cantidad: quantity,
-      motivo: `Venta a ${form.cliente_nombre}`
+      motivo: `Venta a ${client.nombre}`
     });
 
     if (inventoryError) {
@@ -334,11 +341,11 @@ function App() {
       estado: "Borrador"
     };
 
-    await insertRecord("facturas", payload, "factura");
+    await createInvoice(payload, false);
     setNotice("Factura borrador creada desde pedido.");
   }
 
-  async function createAccountingFromInvoice(invoice) {
+  async function createAccountingFromInvoice(invoice, shouldReload = true) {
     if (!supabaseEnabled) {
       setNotice("Conecta Supabase para crear el asiento contable de la factura.");
       return;
@@ -349,6 +356,12 @@ function App() {
 
     if (!cashAccount || !salesAccount) {
       setNotice("Crea al menos una cuenta Activo y una cuenta Ingreso antes de contabilizar facturas.");
+      return;
+    }
+
+    const alreadyAccounted = data.asientos.some((entry) => entry.factura_id === invoice.id);
+    if (alreadyAccounted) {
+      if (shouldReload) setNotice("Esta factura ya tiene un asiento contable enlazado.");
       return;
     }
 
@@ -382,7 +395,67 @@ function App() {
       return;
     }
 
-    setNotice("Asiento contable creado desde la factura.");
+    if (shouldReload) {
+      setNotice("Asiento contable creado desde la factura.");
+      await loadAll();
+    }
+  }
+
+  async function createInvoice(payload, resetForm = true) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para guardar facturas.");
+      return;
+    }
+
+    const { data: invoice, error } = await supabase
+      .from("facturas")
+      .insert({ ...payload, monto: Number(payload.monto || 0) })
+      .select()
+      .single();
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    if (invoice.estado === "Pagada") {
+      await createAccountingFromInvoice(invoice, false);
+      setNotice("Factura pagada creada y contabilizada como ingreso.");
+    } else {
+      setNotice("Factura creada.");
+    }
+
+    if (resetForm) {
+      setForms((current) => ({ ...current, factura: initialForms.factura }));
+    }
+
+    await loadAll();
+  }
+
+  async function deleteInvoice(invoice) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para eliminar facturas.");
+      return;
+    }
+
+    const { error: accountingError } = await supabase
+      .from("contabilidad_asientos")
+      .delete()
+      .eq("factura_id", invoice.id);
+
+    if (accountingError) {
+      setNotice(accountingError.message);
+      return;
+    }
+
+    const { error } = await supabase.from("facturas").delete().eq("id", invoice.id);
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    setNotice("Factura eliminada junto con su asiento contable enlazado.");
     await loadAll();
   }
 
@@ -509,8 +582,9 @@ function App() {
               data={data}
               form={forms.factura}
               setForm={setForm}
-              insertRecord={insertRecord}
+              createInvoice={createInvoice}
               createAccountingFromInvoice={createAccountingFromInvoice}
+              deleteInvoice={deleteInvoice}
             />
           )}
           {active === "contabilidad" && (
@@ -704,13 +778,26 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder }) {
     setForm("pedido", "producto_nombre", product?.nombre || "");
   }
 
+  function selectClient(clientId) {
+    const client = data.clientes.find((item) => item.id === clientId);
+    setForm("pedido", "cliente_id", clientId);
+    setForm("pedido", "cliente_nombre", client?.nombre || "");
+  }
+
   return (
     <div className="grid two">
       <Panel title="Nuevo pedido">
         <form className="form" onSubmit={createOrder}>
           <label>
             Cliente
-            <input value={form.cliente_nombre} onChange={(event) => setForm("pedido", "cliente_nombre", event.target.value)} required />
+            <select value={form.cliente_id} onChange={(event) => selectClient(event.target.value)} required>
+              <option value="">Selecciona cliente</option>
+              {data.clientes.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.nombre} - {client.tipo || "Cliente"}
+                </option>
+              ))}
+            </select>
           </label>
           <label>
             Producto
@@ -762,6 +849,10 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder }) {
                   <FileText size={16} />
                   Facturar
                 </button>
+                <a className="secondary action-link" href="https://ovitribucr.hacienda.go.cr/home/" target="_blank" rel="noreferrer">
+                  <ExternalLink size={16} />
+                  OviTribuCR
+                </a>
               </div>
             </article>
           ))}
@@ -858,27 +949,27 @@ function Inventory({ data, form, setForm, insertRecord }) {
   );
 }
 
-function Billing({ data, form, setForm, insertRecord, createAccountingFromInvoice }) {
+function Billing({ data, form, setForm, createInvoice, createAccountingFromInvoice, deleteInvoice }) {
   const selectedOrder = data.pedidos.find((order) => order.id === form.pedido_id);
 
   function submit(event) {
     event.preventDefault();
-    insertRecord(
-      "facturas",
-      {
-        ...form,
-        monto: Number(form.monto)
-      },
-      "factura"
-    );
+    createInvoice({ ...form, monto: Number(form.monto) });
   }
 
   function applyOrder(orderId) {
     const order = data.pedidos.find((item) => item.id === orderId);
     setForm("factura", "pedido_id", orderId);
     if (!order) return;
+    setForm("factura", "cliente_id", order.cliente_id || "");
     setForm("factura", "cliente_nombre", order.cliente_nombre || "");
     setForm("factura", "monto", String(Number(order.monto || 0) || Number(order.cantidad || 0)));
+  }
+
+  function selectClient(clientId) {
+    const client = data.clientes.find((item) => item.id === clientId);
+    setForm("factura", "cliente_id", clientId);
+    setForm("factura", "cliente_nombre", client?.nombre || "");
   }
 
   return (
@@ -899,7 +990,14 @@ function Billing({ data, form, setForm, insertRecord, createAccountingFromInvoic
             </label>
             <label>
               Cliente
-              <input value={form.cliente_nombre} onChange={(event) => setForm("factura", "cliente_nombre", event.target.value)} required />
+              <select value={form.cliente_id} onChange={(event) => selectClient(event.target.value)} required>
+                <option value="">Selecciona cliente</option>
+                {data.clientes.map((client) => (
+                  <option key={client.id} value={client.id}>
+                    {client.nombre} - {client.tipo || "Cliente"}
+                  </option>
+                ))}
+              </select>
             </label>
             <div className="split">
               <label>
@@ -951,6 +1049,9 @@ function Billing({ data, form, setForm, insertRecord, createAccountingFromInvoic
                 <button className="secondary" type="button" onClick={() => createAccountingFromInvoice(invoice)}>
                   <Calculator size={16} />
                   Contabilizar
+                </button>
+                <button className="secondary danger-button" type="button" onClick={() => deleteInvoice(invoice)}>
+                  Eliminar
                 </button>
               </div>
             </article>

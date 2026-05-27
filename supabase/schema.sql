@@ -144,12 +144,14 @@ create policy "anon_select_entregas" on entregas for select using (true);
 create policy "anon_insert_entregas" on entregas for insert with check (true);
 create policy "anon_select_facturas" on facturas for select using (true);
 create policy "anon_insert_facturas" on facturas for insert with check (true);
+create policy "anon_delete_facturas" on facturas for delete using (true);
 create policy "anon_select_cuentas" on contabilidad_cuentas for select using (true);
 create policy "anon_insert_cuentas" on contabilidad_cuentas for insert with check (true);
 create policy "anon_select_periodos" on contabilidad_periodos for select using (true);
 create policy "anon_insert_periodos" on contabilidad_periodos for insert with check (true);
 create policy "anon_select_asientos" on contabilidad_asientos for select using (true);
 create policy "anon_insert_asientos" on contabilidad_asientos for insert with check (true);
+create policy "anon_delete_asientos" on contabilidad_asientos for delete using (true);
 create policy "anon_select_lineas" on contabilidad_lineas for select using (true);
 create policy "anon_insert_lineas" on contabilidad_lineas for insert with check (true);
 

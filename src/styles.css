@@ -371,6 +371,15 @@ select:focus {
   gap: 7px;
 }
 
+.action-link {
+  text-decoration: none;
+}
+
+.danger-button {
+  border-color: #f3b6c1;
+  color: var(--berry);
+}
+
 .pill {
   align-self: start;
   padding: 5px 9px;
