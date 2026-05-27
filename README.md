@@ -114,6 +114,7 @@ Cada asiento debe cuadrar: total debe igual a total haber.
 
 Las facturas se pueden contabilizar desde el modulo de facturacion, creando un asiento enlazado a la factura.
 Si una factura se crea con estado `Pagada`, el sistema crea automaticamente el asiento de ingreso.
+Para que eliminar facturas/clientes funcione en Supabase, ejecuta la migracion `supabase/migrations/20260526_inventario_y_facturas.sql`.
 
 ## GitHub
 

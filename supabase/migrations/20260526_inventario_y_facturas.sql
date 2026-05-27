@@ -12,3 +12,12 @@ create policy "anon_delete_facturas" on facturas for delete using (true);
 
 drop policy if exists "anon_delete_asientos" on contabilidad_asientos;
 create policy "anon_delete_asientos" on contabilidad_asientos for delete using (true);
+
+drop policy if exists "anon_delete_clientes" on clientes;
+create policy "anon_delete_clientes" on clientes for delete using (true);
+
+drop policy if exists "anon_delete_pedidos" on pedidos;
+create policy "anon_delete_pedidos" on pedidos for delete using (true);
+
+drop policy if exists "anon_delete_lineas" on contabilidad_lineas;
+create policy "anon_delete_lineas" on contabilidad_lineas for delete using (true);

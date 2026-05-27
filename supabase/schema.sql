@@ -134,10 +134,12 @@ alter table contabilidad_lineas enable row level security;
 -- Para produccion, reemplazar por politicas basadas en auth.uid() y roles.
 create policy "anon_select_clientes" on clientes for select using (true);
 create policy "anon_insert_clientes" on clientes for insert with check (true);
+create policy "anon_delete_clientes" on clientes for delete using (true);
 create policy "anon_select_productos" on productos for select using (true);
 create policy "anon_insert_productos" on productos for insert with check (true);
 create policy "anon_select_pedidos" on pedidos for select using (true);
 create policy "anon_insert_pedidos" on pedidos for insert with check (true);
+create policy "anon_delete_pedidos" on pedidos for delete using (true);
 create policy "anon_select_inventario" on inventario_movimientos for select using (true);
 create policy "anon_insert_inventario" on inventario_movimientos for insert with check (true);
 create policy "anon_select_entregas" on entregas for select using (true);
@@ -154,6 +156,7 @@ create policy "anon_insert_asientos" on contabilidad_asientos for insert with ch
 create policy "anon_delete_asientos" on contabilidad_asientos for delete using (true);
 create policy "anon_select_lineas" on contabilidad_lineas for select using (true);
 create policy "anon_insert_lineas" on contabilidad_lineas for insert with check (true);
+create policy "anon_delete_lineas" on contabilidad_lineas for delete using (true);
 
 -- Ejemplos opcionales. Dejados comentados para que el sistema inicie en cero.
 -- insert into contabilidad_cuentas (codigo, nombre, tipo) values

@@ -438,6 +438,21 @@ function App() {
       return;
     }
 
+    const relatedEntries = data.asientos.filter((entry) => entry.factura_id === invoice.id);
+    const relatedEntryIds = relatedEntries.map((entry) => entry.id);
+
+    if (relatedEntryIds.length) {
+      const { error: lineError } = await supabase
+        .from("contabilidad_lineas")
+        .delete()
+        .in("asiento_id", relatedEntryIds);
+
+      if (lineError) {
+        setNotice(lineError.message);
+        return;
+      }
+    }
+
     const { error: accountingError } = await supabase
       .from("contabilidad_asientos")
       .delete()
@@ -448,14 +463,67 @@ function App() {
       return;
     }
 
-    const { error } = await supabase.from("facturas").delete().eq("id", invoice.id);
+    const { data: deletedRows, error } = await supabase
+      .from("facturas")
+      .delete()
+      .eq("id", invoice.id)
+      .select("id");
 
     if (error) {
       setNotice(error.message);
       return;
     }
 
+    if (!deletedRows?.length) {
+      setNotice("No se elimino la factura. Revisa que hayas ejecutado la migracion de permisos DELETE en Supabase.");
+      return;
+    }
+
     setNotice("Factura eliminada junto con su asiento contable enlazado.");
+    await loadAll();
+  }
+
+  async function deleteClient(client) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para eliminar clientes.");
+      return;
+    }
+
+    const clientInvoices = data.facturas.filter(
+      (invoice) => invoice.cliente_id === client.id || invoice.cliente_nombre === client.nombre
+    );
+
+    for (const invoice of clientInvoices) {
+      await deleteInvoice(invoice);
+    }
+
+    const { error: pedidosError } = await supabase
+      .from("pedidos")
+      .delete()
+      .eq("cliente_id", client.id);
+
+    if (pedidosError) {
+      setNotice(pedidosError.message);
+      return;
+    }
+
+    const { data: deletedRows, error } = await supabase
+      .from("clientes")
+      .delete()
+      .eq("id", client.id)
+      .select("id");
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    if (!deletedRows?.length) {
+      setNotice("No se elimino el cliente. Revisa permisos DELETE en Supabase.");
+      return;
+    }
+
+    setNotice("Cliente eliminado junto con pedidos/facturas enlazadas.");
     await loadAll();
   }
 
@@ -527,19 +595,12 @@ function App() {
         <section className="content">
           {active === "dashboard" && <Dashboard data={data} totals={totals} />}
           {active === "clientes" && (
-            <SimpleModule
-              title="Nuevo cliente"
+            <Clients
               form={forms.cliente}
-              onChange={(field, value) => setForm("cliente", field, value)}
-              onSubmit={(payload) => insertRecord("clientes", payload, "cliente")}
-              fields={[
-                ["nombre", "Nombre"],
-                ["telefono", "Telefono"],
-                ["zona", "Zona"],
-                ["tipo", "Tipo"]
-              ]}
+              setForm={setForm}
+              insertRecord={insertRecord}
               rows={data.clientes}
-              example={examples.clientes[0]}
+              deleteClient={deleteClient}
             />
           )}
           {active === "productos" && (
@@ -694,6 +755,60 @@ function SimpleModule({ title, form, fields, onChange, onSubmit, rows, example }
       </Panel>
       <Panel title="Registros">
         <Rows rows={rows} />
+      </Panel>
+    </div>
+  );
+}
+
+function Clients({ form, setForm, insertRecord, rows, deleteClient }) {
+  function submit(event) {
+    event.preventDefault();
+    insertRecord("clientes", form, "cliente");
+  }
+
+  return (
+    <div className="grid two">
+      <Panel title="Nuevo cliente">
+        <form className="form" onSubmit={submit}>
+          <label>
+            Nombre
+            <input value={form.nombre} onChange={(event) => setForm("cliente", "nombre", event.target.value)} required />
+          </label>
+          <div className="split">
+            <label>
+              Telefono
+              <input value={form.telefono} onChange={(event) => setForm("cliente", "telefono", event.target.value)} required />
+            </label>
+            <label>
+              Zona
+              <input value={form.zona} onChange={(event) => setForm("cliente", "zona", event.target.value)} required />
+            </label>
+          </div>
+          <label>
+            Tipo
+            <input value={form.tipo} onChange={(event) => setForm("cliente", "tipo", event.target.value)} required />
+          </label>
+          <button className="primary">Guardar cliente</button>
+        </form>
+        <Example item={examples.clientes[0]} />
+      </Panel>
+      <Panel title="Clientes creados">
+        {!rows.length && <div className="empty">Sin clientes todavia.</div>}
+        <div className="rows">
+          {rows.map((client) => (
+            <article className="record" key={client.id}>
+              <div>
+                <strong>{client.nombre}</strong>
+                <p>{compact(client)}</p>
+              </div>
+              <div className="actions">
+                <button className="secondary danger-button" type="button" onClick={() => deleteClient(client)}>
+                  Eliminar
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
       </Panel>
     </div>
   );
