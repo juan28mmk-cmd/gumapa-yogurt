@@ -297,6 +297,54 @@ function App() {
     setNotice("Pedido creado e inventario descontado por producto.");
     await loadAll();
   }
+  async function deleteOrder(order) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para eliminar pedidos.");
+      return;
+    }
+
+    const linkedInvoices = data.facturas.filter((invoice) => invoice.pedido_id === order.id);
+    const linkedInvoiceIds = linkedInvoices.map((invoice) => invoice.id);
+    const linkedEntryIds = data.asientos
+      .filter((entry) => linkedInvoiceIds.includes(entry.factura_id))
+      .map((entry) => entry.id);
+
+    if (linkedEntryIds.length) {
+      const { error: lineError } = await supabase.from("contabilidad_lineas").delete().in("asiento_id", linkedEntryIds);
+      if (lineError) {
+        setNotice(lineError.message);
+        return;
+      }
+    }
+
+    if (linkedInvoiceIds.length) {
+      const { error: accountingError } = await supabase.from("contabilidad_asientos").delete().in("factura_id", linkedInvoiceIds);
+      if (accountingError) {
+        setNotice(accountingError.message);
+        return;
+      }
+
+      const { error: invoiceError } = await supabase.from("facturas").delete().in("id", linkedInvoiceIds);
+      if (invoiceError) {
+        setNotice(invoiceError.message);
+        return;
+      }
+    }
+
+    const { data: deletedRows, error } = await supabase.from("pedidos").delete().eq("id", order.id).select("id");
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    if (!deletedRows?.length) {
+      setNotice("No se elimino el pedido. Revisa permisos DELETE en Supabase.");
+      return;
+    }
+
+    setNotice("Pedido eliminado junto con facturas y asientos enlazados.");
+    await loadAll();
+  }
   async function createAccountingEntry(event) {
     event.preventDefault();
     const form = forms.asiento;
@@ -903,6 +951,7 @@ function App() {
               setForm={setForm}
               createOrder={createOrder}
               createInvoiceFromOrder={createInvoiceFromOrder}
+              deleteOrder={deleteOrder}
             />
           )}
           {active === "inventario" && (
@@ -1010,6 +1059,11 @@ function Login({ onLogin }) {
 }
 
 function Dashboard({ data, totals }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const pendingAlerts = data.tareas.filter((task) => !task.completada && task.alerta);
+  const todayAlerts = pendingAlerts.filter((task) => task.fecha === today);
+  const overdueAlerts = pendingAlerts.filter((task) => task.fecha < today);
+
   return (
     <>
       <Kpis
@@ -1017,7 +1071,7 @@ function Dashboard({ data, totals }) {
           ["Clientes", data.clientes.length],
           ["Productos", data.productos.length],
           ["Facturado", money(totals.totalFacturado)],
-          ["Utilidad", money(totals.utilidad)]
+          ["Alertas", pendingAlerts.length]
         ]}
       />
       <div className="grid two">
@@ -1025,11 +1079,18 @@ function Dashboard({ data, totals }) {
           <Record title="Pedidos" detail={`${data.pedidos.length} pedidos registrados`} status="0 inicial" />
           <Record title="Entregas" detail={`${data.entregas.length} rutas registradas`} status="0 inicial" />
           <Record title="Inventario" detail={`${data.inventario.length} movimientos`} status="0 inicial" />
+          <Record
+            title="Alertas de calendario"
+            detail={`${todayAlerts.length} para hoy - ${overdueAlerts.length} vencidas`}
+            status={`${pendingAlerts.length} pendientes`}
+            tone={pendingAlerts.length ? "warn" : ""}
+          />
         </Panel>
         <Panel title="Finanzas">
           <Record title="Pendiente de cobro" detail={money(totals.pendiente)} status="Facturas" tone="warn" />
           <Record title="Ingresos contables" detail={money(totals.ingresos)} status="Debe/Haber" />
           <Record title="Gastos contables" detail={money(totals.gastos)} status="Control" tone="warn" />
+          <Record title="Utilidad" detail={money(totals.utilidad)} status="Resultado" />
         </Panel>
       </div>
     </>
@@ -1186,7 +1247,7 @@ function Products({ data, form, setForm, createProduct, deleteProduct }) {
   );
 }
 
-function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder }) {
+function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder, deleteOrder }) {
   const selectedProduct = data.productos.find((item) => item.id === form.producto_id);
   const selectedStock = selectedProduct ? getProductStock(data.inventario, selectedProduct.id) : 0;
   const requestedQuantity = Number(form.cantidad || 0);
@@ -1344,6 +1405,9 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder }) {
                   <ExternalLink size={16} />
                   OviTribuCR
                 </a>
+                <button className="secondary danger-button" type="button" onClick={() => deleteOrder(order)}>
+                  Eliminar
+                </button>
               </div>
             </article>
           ))}
