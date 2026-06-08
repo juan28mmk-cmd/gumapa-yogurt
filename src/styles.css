@@ -376,6 +376,23 @@ select:focus {
   gap: 7px;
 }
 
+.compact-actions {
+  gap: 6px;
+}
+
+.compact-actions .secondary {
+  min-height: 32px;
+  padding: 0 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.compact-actions svg {
+  height: 14px;
+  width: 14px;
+}
+
 .action-link {
   text-decoration: none;
 }

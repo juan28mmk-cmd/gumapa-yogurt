@@ -851,6 +851,41 @@ function App() {
     setNotice(form.crear_tarea ? "Entrega creada y agregada al calendario." : "Entrega creada.");
     await loadAll();
   }
+  async function deleteDelivery(delivery) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para eliminar entregas.");
+      return;
+    }
+
+    const { error: taskError } = await supabase
+      .from("calendario_tareas")
+      .delete()
+      .eq("entrega_id", delivery.id);
+
+    if (taskError) {
+      setNotice(taskError.message);
+      return;
+    }
+
+    const { data: deletedRows, error } = await supabase
+      .from("entregas")
+      .delete()
+      .eq("id", delivery.id)
+      .select("id");
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    if (!deletedRows?.length) {
+      setNotice("No se elimino la entrega. Revisa permisos DELETE en Supabase.");
+      return;
+    }
+
+    setNotice("Entrega eliminada junto con su alerta del calendario.");
+    await loadAll();
+  }
 
 
   async function createTask(event) {
@@ -1017,6 +1052,7 @@ function App() {
               form={forms.entrega}
               setForm={setForm}
               createDelivery={createDelivery}
+              deleteDelivery={deleteDelivery}
             />
           )}
           {active === "calendario" && (
@@ -1438,7 +1474,7 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder, dele
                 <strong>{order.cliente_nombre || "Pedido"}</strong>
                 <p>{compact(order)}</p>
               </div>
-              <div className="actions">
+              <div className="actions compact-actions">
                 <button className="secondary" type="button" onClick={() => createInvoiceFromOrder(order)}>
                   <FileText size={16} />
                   Facturar
@@ -1458,7 +1494,7 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder, dele
     </div>
   );
 }
-function Deliveries({ data, form, setForm, createDelivery }) {
+function Deliveries({ data, form, setForm, createDelivery, deleteDelivery }) {
   const selectedOrder = data.pedidos.find((order) => order.id === form.pedido_id);
 
   function selectOrder(orderId) {
@@ -1518,13 +1554,18 @@ function Deliveries({ data, form, setForm, createDelivery }) {
         {!data.entregas.length && <div className="empty">Sin entregas todavia.</div>}
         <div className="rows">
           {data.entregas.map((delivery) => (
-            <Record
-              key={delivery.id}
-              title={delivery.cliente_nombre || "Entrega"}
-              detail={compact(delivery)}
-              status={delivery.pedido_id ? "Pedido enlazado" : "Sin pedido"}
-              tone={delivery.estado === "Pendiente" ? "warn" : ""}
-            />
+            <article className="record" key={delivery.id}>
+              <div>
+                <strong>{delivery.cliente_nombre || "Entrega"}</strong>
+                <p>{compact(delivery)}</p>
+              </div>
+              <div className="actions compact-actions">
+                <span className={`pill ${delivery.estado === "Pendiente" ? "warn" : ""}`}>{delivery.pedido_id ? "Pedido enlazado" : "Sin pedido"}</span>
+                <button className="secondary danger-button" type="button" onClick={() => deleteDelivery(delivery)}>
+                  Eliminar
+                </button>
+              </div>
+            </article>
           ))}
         </div>
       </Panel>

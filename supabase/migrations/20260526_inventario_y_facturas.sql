@@ -52,6 +52,9 @@ create policy "anon_delete_clientes" on clientes for delete using (true);
 drop policy if exists "anon_delete_pedidos" on pedidos;
 create policy "anon_delete_pedidos" on pedidos for delete using (true);
 
+drop policy if exists "anon_delete_entregas" on entregas;
+create policy "anon_delete_entregas" on entregas for delete using (true);
+
 drop policy if exists "anon_update_pedidos" on pedidos;
 create policy "anon_update_pedidos" on pedidos for update using (true) with check (true);
 
