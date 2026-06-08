@@ -1,4 +1,5 @@
 alter table pedidos add column if not exists monto numeric(12,2) not null default 0;
+alter table entregas add column if not exists pedido_id uuid references pedidos(id);
 
 alter table inventario_movimientos add column if not exists lote text;
 alter table inventario_movimientos add column if not exists fecha_creacion date;
@@ -97,3 +98,6 @@ create policy "anon_update_calendario_tareas" on calendario_tareas for update us
 
 drop policy if exists "anon_delete_calendario_tareas" on calendario_tareas;
 create policy "anon_delete_calendario_tareas" on calendario_tareas for delete using (true);
+alter table calendario_tareas add column if not exists pedido_id uuid references pedidos(id);
+alter table calendario_tareas add column if not exists entrega_id uuid references entregas(id);
+

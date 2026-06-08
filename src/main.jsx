@@ -73,7 +73,7 @@ const initialForms = {
     fecha_vencimiento: "",
     motivo: ""
   },
-  entrega: { cliente_nombre: "", ruta: "", fecha_entrega: "", estado: "Programada" },
+  entrega: { pedido_id: "", cliente_nombre: "", ruta: "", fecha_entrega: "", estado: "Programada", crear_tarea: true, alerta: "" },
   factura: { pedido_id: "", cliente_id: "", cliente_nombre: "", numero: "", monto: "", estado: "Borrador" },
   gasto: { fecha: "", proveedor: "", categoria: "Gasto general", descripcion: "", monto: "", metodo_pago: "Caja/Banco" },
   tarea: { fecha: new Date().toISOString().slice(0, 10), titulo: "", descripcion: "", prioridad: "Normal", alerta: "" },
@@ -802,6 +802,55 @@ function App() {
     setNotice("Producto eliminado junto con sus movimientos de inventario.");
     await loadAll();
   }
+  async function createDelivery(event) {
+    event.preventDefault();
+    const form = forms.entrega;
+    const order = data.pedidos.find((item) => item.id === form.pedido_id);
+
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para guardar entregas.");
+      return;
+    }
+
+    const { data: delivery, error } = await supabase
+      .from("entregas")
+      .insert({
+        pedido_id: form.pedido_id || null,
+        cliente_nombre: order?.cliente_nombre || form.cliente_nombre,
+        ruta: form.ruta,
+        fecha_entrega: form.fecha_entrega,
+        estado: form.estado
+      })
+      .select()
+      .single();
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    if (form.crear_tarea) {
+      const { error: taskError } = await supabase.from("calendario_tareas").insert({
+        fecha: form.fecha_entrega,
+        titulo: `Entrega - ${order?.cliente_nombre || form.cliente_nombre || "Cliente"}`,
+        descripcion: `Pedido: ${order?.producto_nombre || "Entrega programada"}. Ruta: ${form.ruta || "sin ruta"}`,
+        prioridad: "Alta",
+        alerta: form.alerta || null,
+        completada: false,
+        pedido_id: form.pedido_id || null,
+        entrega_id: delivery.id
+      });
+
+      if (taskError) {
+        setNotice(taskError.message);
+        return;
+      }
+    }
+
+    setForms((current) => ({ ...current, entrega: initialForms.entrega }));
+    setNotice(form.crear_tarea ? "Entrega creada y agregada al calendario." : "Entrega creada.");
+    await loadAll();
+  }
 
 
   async function createTask(event) {
@@ -963,18 +1012,11 @@ function App() {
             />
           )}
           {active === "entregas" && (
-            <SimpleModule
-              title="Nueva entrega"
+            <Deliveries
+              data={data}
               form={forms.entrega}
-              onChange={(field, value) => setForm("entrega", field, value)}
-              onSubmit={(payload) => insertRecord("entregas", payload, "entrega")}
-              fields={[
-                ["cliente_nombre", "Cliente"],
-                ["ruta", "Ruta"],
-                ["fecha_entrega", "Fecha", "date"],
-                ["estado", "Estado"]
-              ]}
-              rows={data.entregas}
+              setForm={setForm}
+              createDelivery={createDelivery}
             />
           )}
           {active === "calendario" && (
@@ -1410,6 +1452,79 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder, dele
                 </button>
               </div>
             </article>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+function Deliveries({ data, form, setForm, createDelivery }) {
+  const selectedOrder = data.pedidos.find((order) => order.id === form.pedido_id);
+
+  function selectOrder(orderId) {
+    const order = data.pedidos.find((item) => item.id === orderId);
+    setForm("entrega", "pedido_id", orderId);
+    setForm("entrega", "cliente_nombre", order?.cliente_nombre || "");
+  }
+
+  return (
+    <div className="grid two">
+      <Panel title="Nueva entrega">
+        <form className="form" onSubmit={createDelivery}>
+          <label>
+            Pedido
+            <select value={form.pedido_id || ""} onChange={(event) => selectOrder(event.target.value)}>
+              <option value="">Sin pedido enlazado</option>
+              {data.pedidos.map((order) => (
+                <option key={order.id} value={order.id}>
+                  {order.cliente_nombre || "Pedido"} - {order.producto_nombre || "productos"}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Cliente
+            <input value={form.cliente_nombre} onChange={(event) => setForm("entrega", "cliente_nombre", event.target.value)} required />
+          </label>
+          <div className="split">
+            <label>
+              Ruta
+              <input value={form.ruta} onChange={(event) => setForm("entrega", "ruta", event.target.value)} required />
+            </label>
+            <label>
+              Fecha de entrega
+              <input type="date" value={form.fecha_entrega} onChange={(event) => setForm("entrega", "fecha_entrega", event.target.value)} required />
+            </label>
+          </div>
+          <div className="split">
+            <label>
+              Estado
+              <input value={form.estado} onChange={(event) => setForm("entrega", "estado", event.target.value)} required />
+            </label>
+            <label>
+              Hora de alerta
+              <input type="time" value={form.alerta || ""} onChange={(event) => setForm("entrega", "alerta", event.target.value)} />
+            </label>
+          </div>
+          <label className="check-row option-check">
+            <input type="checkbox" checked={Boolean(form.crear_tarea)} onChange={(event) => setForm("entrega", "crear_tarea", event.target.checked)} />
+            <span>Agregar esta entrega al calendario</span>
+          </label>
+          {selectedOrder && <div className="empty">Pedido seleccionado: {compact(selectedOrder)}</div>}
+          <button className="primary">Guardar entrega</button>
+        </form>
+      </Panel>
+      <Panel title="Entregas programadas">
+        {!data.entregas.length && <div className="empty">Sin entregas todavia.</div>}
+        <div className="rows">
+          {data.entregas.map((delivery) => (
+            <Record
+              key={delivery.id}
+              title={delivery.cliente_nombre || "Entrega"}
+              detail={compact(delivery)}
+              status={delivery.pedido_id ? "Pedido enlazado" : "Sin pedido"}
+              tone={delivery.estado === "Pendiente" ? "warn" : ""}
+            />
           ))}
         </div>
       </Panel>
