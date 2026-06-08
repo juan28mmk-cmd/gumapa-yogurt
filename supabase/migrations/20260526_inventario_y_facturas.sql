@@ -71,3 +71,29 @@ create policy "anon_insert_gastos" on gastos for insert with check (true);
 
 drop policy if exists "anon_delete_gastos" on gastos;
 create policy "anon_delete_gastos" on gastos for delete using (true);
+
+create table if not exists calendario_tareas (
+  id uuid primary key default gen_random_uuid(),
+  fecha date not null default current_date,
+  titulo text not null,
+  descripcion text,
+  prioridad text not null default 'Normal',
+  alerta time,
+  completada boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table calendario_tareas enable row level security;
+
+drop policy if exists "anon_select_calendario_tareas" on calendario_tareas;
+create policy "anon_select_calendario_tareas" on calendario_tareas for select using (true);
+
+drop policy if exists "anon_insert_calendario_tareas" on calendario_tareas;
+create policy "anon_insert_calendario_tareas" on calendario_tareas for insert with check (true);
+
+drop policy if exists "anon_update_calendario_tareas" on calendario_tareas;
+create policy "anon_update_calendario_tareas" on calendario_tareas for update using (true) with check (true);
+
+drop policy if exists "anon_delete_calendario_tareas" on calendario_tareas;
+create policy "anon_delete_calendario_tareas" on calendario_tareas for delete using (true);

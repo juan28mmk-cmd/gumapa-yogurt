@@ -1,9 +1,10 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BarChart3,
   Boxes,
   Calculator,
+  CalendarDays,
   ClipboardList,
   ExternalLink,
   FileText,
@@ -26,6 +27,7 @@ const modules = [
   { id: "pedidos", label: "Pedidos", title: "Pedidos", icon: ClipboardList },
   { id: "inventario", label: "Inventario", title: "Inventario", icon: Boxes },
   { id: "entregas", label: "Entregas", title: "Entregas", icon: Truck },
+  { id: "calendario", label: "Calendario", title: "Calendario y tareas", icon: CalendarDays },
   { id: "facturacion", label: "Facturacion", title: "Facturacion", icon: ReceiptText },
   { id: "contabilidad", label: "Contabilidad", title: "Contabilidad general", icon: Calculator },
   { id: "reportes", label: "Reportes", title: "Reportes", icon: BarChart3 }
@@ -39,6 +41,7 @@ const emptyData = {
   entregas: [],
   facturas: [],
   gastos: [],
+  tareas: [],
   cuentas: [],
   asientos: [],
   lineas: []
@@ -73,6 +76,7 @@ const initialForms = {
   entrega: { cliente_nombre: "", ruta: "", fecha_entrega: "", estado: "Programada" },
   factura: { pedido_id: "", cliente_id: "", cliente_nombre: "", numero: "", monto: "", estado: "Borrador" },
   gasto: { fecha: "", proveedor: "", categoria: "Gasto general", descripcion: "", monto: "", metodo_pago: "Caja/Banco" },
+  tarea: { fecha: new Date().toISOString().slice(0, 10), titulo: "", descripcion: "", prioridad: "Normal", alerta: "" },
   cuenta: { codigo: "", nombre: "", tipo: "Activo" },
   asiento: {
     fecha: "",
@@ -131,6 +135,7 @@ function App() {
       supabase.from("entregas").select("*").order("created_at", { ascending: false }),
       supabase.from("facturas").select("*").order("created_at", { ascending: false }),
       supabase.from("gastos").select("*").order("created_at", { ascending: false }),
+      supabase.from("calendario_tareas").select("*").order("fecha", { ascending: true }),
       supabase.from("contabilidad_cuentas").select("*").order("codigo", { ascending: true }),
       supabase.from("contabilidad_asientos").select("*").order("fecha", { ascending: false }),
       supabase.from("contabilidad_lineas").select("*")
@@ -149,9 +154,10 @@ function App() {
       entregas: requests[4].data || [],
       facturas: requests[5].data || [],
       gastos: requests[6].data || [],
-      cuentas: requests[7].data || [],
-      asientos: requests[8].data || [],
-      lineas: requests[9].data || []
+      tareas: requests[7].data || [],
+      cuentas: requests[8].data || [],
+      asientos: requests[9].data || [],
+      lineas: requests[10].data || []
     });
     setLoading(false);
   }
@@ -255,7 +261,7 @@ function App() {
 
     const totalQuantity = lines.reduce((total, line) => total + Number(line.cantidad || 0), 0);
     const totalAmount = lines.reduce((total, line) => total + Number(line.total || 0), 0);
-    const summary = lines.map((line) => `${line.cantidad} x ${line.producto_nombre}`).join("; ");
+    const summary = lines.map((line) => `${line.cantidad} x ${line.producto_nombre}`).join(" - ");
 
     const { error } = await supabase.from("pedidos").insert({
       cliente_id: client.id,
@@ -749,6 +755,68 @@ function App() {
     await loadAll();
   }
 
+
+  async function createTask(event) {
+    event.preventDefault();
+
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para guardar tareas del calendario.");
+      return;
+    }
+
+    const { error } = await supabase.from("calendario_tareas").insert({
+      ...forms.tarea,
+      completada: false
+    });
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    setForms((current) => ({
+      ...current,
+      tarea: { ...initialForms.tarea, fecha: current.tarea.fecha }
+    }));
+    setNotice("Tarea agregada al calendario.");
+    await loadAll();
+  }
+
+  async function toggleTask(task) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para actualizar tareas.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("calendario_tareas")
+      .update({ completada: !task.completada })
+      .eq("id", task.id);
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    await loadAll();
+  }
+
+  async function deleteTask(task) {
+    if (!supabaseEnabled) {
+      setNotice("Conecta Supabase para eliminar tareas.");
+      return;
+    }
+
+    const { error } = await supabase.from("calendario_tareas").delete().eq("id", task.id);
+
+    if (error) {
+      setNotice(error.message);
+      return;
+    }
+
+    setNotice("Tarea eliminada.");
+    await loadAll();
+  }
   function setForm(formKey, field, value) {
     setForms((current) => ({
       ...current,
@@ -858,6 +926,16 @@ function App() {
                 ["estado", "Estado"]
               ]}
               rows={data.entregas}
+            />
+          )}
+          {active === "calendario" && (
+            <CalendarTasks
+              data={data}
+              form={forms.tarea}
+              setForm={setForm}
+              createTask={createTask}
+              toggleTask={toggleTask}
+              deleteTask={deleteTask}
             />
           )}
           {active === "facturacion" && (
@@ -1268,6 +1346,83 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder }) {
                 </a>
               </div>
             </article>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+function CalendarTasks({ data, form, setForm, createTask, toggleTask, deleteTask }) {
+  const selectedDate = form.fecha || new Date().toISOString().slice(0, 10);
+  const dayTasks = data.tareas.filter((task) => task.fecha === selectedDate);
+  const pendingAlerts = data.tareas.filter((task) => !task.completada && task.alerta);
+
+  return (
+    <div className="grid two">
+      <Panel title="Nueva tarea">
+        <form className="form" onSubmit={createTask}>
+          <label>
+            Dia
+            <input type="date" value={selectedDate} onChange={(event) => setForm("tarea", "fecha", event.target.value)} required />
+          </label>
+          <label>
+            Titulo
+            <input value={form.titulo} onChange={(event) => setForm("tarea", "titulo", event.target.value)} required />
+          </label>
+          <label>
+            Descripcion
+            <input value={form.descripcion} onChange={(event) => setForm("tarea", "descripcion", event.target.value)} />
+          </label>
+          <div className="split">
+            <label>
+              Prioridad
+              <select value={form.prioridad} onChange={(event) => setForm("tarea", "prioridad", event.target.value)}>
+                {['Normal', 'Alta', 'Urgente'].map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </label>
+            <label>
+              Alerta
+              <input type="time" value={form.alerta} onChange={(event) => setForm("tarea", "alerta", event.target.value)} />
+            </label>
+          </div>
+          <button className="primary">Agregar tarea</button>
+        </form>
+      </Panel>
+
+      <Panel title={`Tareas del ${selectedDate}`}>
+        {!dayTasks.length && <div className="empty">No hay tareas para este dia.</div>}
+        <div className="rows">
+          {dayTasks.map((task) => (
+            <article className={`record task-record ${task.completada ? 'done' : ''}`} key={task.id}>
+              <label className="check-row">
+                <input type="checkbox" checked={Boolean(task.completada)} onChange={() => toggleTask(task)} />
+                <span>
+                  <strong>{task.titulo}</strong>
+                  <p>{task.descripcion || 'Sin descripcion'}{task.alerta ? ` - alerta ${task.alerta}` : ''}</p>
+                </span>
+              </label>
+              <div className="actions">
+                <span className={`pill ${task.prioridad === 'Urgente' || task.prioridad === 'Alta' ? 'warn' : ''}`}>{task.prioridad}</span>
+                <button className="secondary danger-button" type="button" onClick={() => deleteTask(task)}>
+                  Eliminar
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </Panel>
+
+      <Panel title="Alertas pendientes">
+        {!pendingAlerts.length && <div className="empty">No hay alertas pendientes.</div>}
+        <div className="rows">
+          {pendingAlerts.map((task) => (
+            <Record
+              key={task.id}
+              title={`${task.fecha} - ${task.titulo}`}
+              detail={`${task.alerta} - ${task.descripcion || 'Sin descripcion'}`}
+              status={task.prioridad}
+              tone={task.prioridad === 'Urgente' || task.prioridad === 'Alta' ? 'warn' : ''}
+            />
           ))}
         </div>
       </Panel>
@@ -1758,7 +1913,7 @@ function compact(row) {
     .filter(([key, value]) => !["id", "created_at", "updated_at"].includes(key) && value !== null && value !== "")
     .slice(0, 4)
     .map(([key, value]) => `${labelize(key)}: ${value}`)
-    .join(" Â· ");
+    .join(" - ");
 }
 
 function labelize(key) {
@@ -1766,8 +1921,4 @@ function labelize(key) {
 }
 
 createRoot(document.getElementById("root")).render(<App />);
-
-
-
-
 
