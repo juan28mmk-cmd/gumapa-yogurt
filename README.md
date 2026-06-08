@@ -62,6 +62,10 @@ Las tablas inician vacias. El sistema muestra ejemplos en pantalla para guiar, p
 
 Si ya habias ejecutado una version anterior del esquema, ejecuta tambien `supabase/migrations/20260526_inventario_y_facturas.sql`.
 
+
+## Pedidos con varios productos
+
+En Pedidos puedes seleccionar un cliente y agregar varios productos antes de guardar. El sistema calcula el total, valida inventario por cada producto y descuenta cada producto vendido como una salida de inventario.
 ## Inventario
 
 Inventario registra:
@@ -149,5 +153,6 @@ En Vercel/Netlify:
 5. Agregar variables de entorno de Supabase.
 6. Configurar el dominio personalizado desde el panel del proveedor.
 # GUMAPA-GESTION
+
 
 

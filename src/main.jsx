@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BarChart3,
@@ -59,7 +59,7 @@ const examples = {
 const initialForms = {
   cliente: { nombre: "", telefono: "", zona: "", tipo: "Minorista" },
   producto: { nombre: "", categoria: "Yogurt", precio: "", stock_minimo: "0", stock_inicial: "0", lote: "" },
-  pedido: { cliente_id: "", cliente_nombre: "", producto_id: "", producto_nombre: "", cantidad: "", estado: "Pendiente" },
+  pedido: { cliente_id: "", cliente_nombre: "", producto_id: "", producto_nombre: "", cantidad: "", estado: "Pendiente", lineas: [] },
   inventario: {
     producto_id: "",
     producto_nombre: "",
@@ -223,16 +223,15 @@ function App() {
     event.preventDefault();
     const form = forms.pedido;
     const client = data.clientes.find((item) => item.id === form.cliente_id);
-    const product = data.productos.find((item) => item.id === form.producto_id);
-    const quantity = Number(form.cantidad);
+    const lines = form.lineas || [];
 
     if (!client) {
       setNotice("Selecciona un cliente para crear el pedido.");
       return;
     }
 
-    if (!product) {
-      setNotice("Selecciona un producto para crear el pedido.");
+    if (!lines.length) {
+      setNotice("Agrega al menos un producto al pedido.");
       return;
     }
 
@@ -241,24 +240,30 @@ function App() {
       return;
     }
 
-    const available = getProductStock(data.inventario, product.id);
-    if (available <= 0) {
-      setNotice(`No hay inventario disponible para ${product.nombre}.`);
-      return;
+    for (const line of lines) {
+      const available = getProductStock(data.inventario, line.producto_id);
+      if (available <= 0) {
+        setNotice(`No hay inventario disponible para ${line.producto_nombre}.`);
+        return;
+      }
+
+      if (available < line.cantidad) {
+        setNotice(`Inventario insuficiente para ${line.producto_nombre}. Disponible: ${available}, solicitado: ${line.cantidad}.`);
+        return;
+      }
     }
 
-    if (available < quantity) {
-      setNotice(`Inventario insuficiente para ${product.nombre}. Disponible: ${available}, solicitado: ${quantity}.`);
-      return;
-    }
+    const totalQuantity = lines.reduce((total, line) => total + Number(line.cantidad || 0), 0);
+    const totalAmount = lines.reduce((total, line) => total + Number(line.total || 0), 0);
+    const summary = lines.map((line) => `${line.cantidad} x ${line.producto_nombre}`).join("; ");
 
     const { error } = await supabase.from("pedidos").insert({
       cliente_id: client.id,
       cliente_nombre: client.nombre,
-      producto_id: product.id,
-      producto_nombre: product.nombre,
-      cantidad: quantity,
-      monto: Number(product.precio || 0) * quantity,
+      producto_id: lines[0]?.producto_id || null,
+      producto_nombre: summary,
+      cantidad: totalQuantity,
+      monto: totalAmount,
       estado: form.estado
     });
 
@@ -267,13 +272,15 @@ function App() {
       return;
     }
 
-    const { error: inventoryError } = await supabase.from("inventario_movimientos").insert({
-      producto_id: product.id,
-      producto_nombre: product.nombre,
+    const inventoryRows = lines.map((line) => ({
+      producto_id: line.producto_id,
+      producto_nombre: line.producto_nombre,
       tipo: "Salida",
-      cantidad: quantity,
+      cantidad: line.cantidad,
       motivo: `Venta a ${client.nombre}`
-    });
+    }));
+
+    const { error: inventoryError } = await supabase.from("inventario_movimientos").insert(inventoryRows);
 
     if (inventoryError) {
       setNotice(inventoryError.message);
@@ -281,10 +288,9 @@ function App() {
     }
 
     setForms((current) => ({ ...current, pedido: initialForms.pedido }));
-    setNotice("Pedido creado e inventario descontado.");
+    setNotice("Pedido creado e inventario descontado por producto.");
     await loadAll();
   }
-
   async function createAccountingEntry(event) {
     event.preventDefault();
     const form = forms.asiento;
@@ -1106,10 +1112,12 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder }) {
   const selectedProduct = data.productos.find((item) => item.id === form.producto_id);
   const selectedStock = selectedProduct ? getProductStock(data.inventario, selectedProduct.id) : 0;
   const requestedQuantity = Number(form.cantidad || 0);
-  const remainingStock = selectedStock - requestedQuantity;
+  const existingLineQuantity = (form.lineas || []).find((line) => line.producto_id === selectedProduct?.id)?.cantidad || 0;
+  const remainingStock = selectedStock - existingLineQuantity - requestedQuantity;
   const stockMinimum = Number(selectedProduct?.stock_minimo || 0);
   const hasStockWarning = selectedProduct && requestedQuantity > 0 && remainingStock < 0;
   const hasLowStockWarning = selectedProduct && requestedQuantity > 0 && remainingStock >= 0 && remainingStock <= stockMinimum;
+  const orderTotal = (form.lineas || []).reduce((total, line) => total + Number(line.total || 0), 0);
 
   function selectProduct(productId) {
     const product = data.productos.find((item) => item.id === productId);
@@ -1121,6 +1129,45 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder }) {
     const client = data.clientes.find((item) => item.id === clientId);
     setForm("pedido", "cliente_id", clientId);
     setForm("pedido", "cliente_nombre", client?.nombre || "");
+  }
+
+  function addLine() {
+    if (!selectedProduct) return;
+    if (!requestedQuantity || requestedQuantity <= 0) return;
+    if (hasStockWarning) return;
+
+    const currentLines = form.lineas || [];
+    const existing = currentLines.find((line) => line.producto_id === selectedProduct.id);
+    let nextLines;
+
+    if (existing) {
+      nextLines = currentLines.map((line) => {
+        if (line.producto_id !== selectedProduct.id) return line;
+        const quantity = Number(line.cantidad) + requestedQuantity;
+        return { ...line, cantidad: quantity, total: quantity * Number(selectedProduct.precio || 0) };
+      });
+    } else {
+      nextLines = [
+        ...currentLines,
+        {
+          producto_id: selectedProduct.id,
+          producto_nombre: selectedProduct.nombre,
+          categoria: selectedProduct.categoria,
+          precio: Number(selectedProduct.precio || 0),
+          cantidad: requestedQuantity,
+          total: requestedQuantity * Number(selectedProduct.precio || 0)
+        }
+      ];
+    }
+
+    setForm("pedido", "lineas", nextLines);
+    setForm("pedido", "producto_id", "");
+    setForm("pedido", "producto_nombre", "");
+    setForm("pedido", "cantidad", "");
+  }
+
+  function removeLine(productId) {
+    setForm("pedido", "lineas", (form.lineas || []).filter((line) => line.producto_id !== productId));
   }
 
   return (
@@ -1138,17 +1185,23 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder }) {
               ))}
             </select>
           </label>
-          <label>
-            Producto
-            <select value={form.producto_id} onChange={(event) => selectProduct(event.target.value)} required>
-              <option value="">Selecciona producto</option>
-              {data.productos.map((product) => (
-                <option key={product.id} value={product.id}>
-                  {product.nombre} - {product.categoria} - stock {getProductStock(data.inventario, product.id)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="split">
+            <label>
+              Producto
+              <select value={form.producto_id} onChange={(event) => selectProduct(event.target.value)}>
+                <option value="">Selecciona producto</option>
+                {data.productos.map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.nombre} - {product.categoria} - stock {getProductStock(data.inventario, product.id)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Cantidad
+              <input type="number" value={form.cantidad} onChange={(event) => setForm("pedido", "cantidad", event.target.value)} />
+            </label>
+          </div>
           {selectedProduct && (
             <div className={`inventory-alert ${hasStockWarning ? "danger" : hasLowStockWarning ? "warn" : ""}`}>
               <strong>Inventario disponible: {selectedStock}</strong>
@@ -1156,22 +1209,43 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder }) {
                 {requestedQuantity > 0
                   ? hasStockWarning
                     ? `No alcanza. Faltan ${Math.abs(remainingStock)} unidades.`
-                    : `Despues del pedido quedarian ${remainingStock} unidades.`
+                    : `Despues de agregarlo quedarian ${remainingStock} unidades.`
                   : "Indica la cantidad para calcular el inventario restante."}
               </span>
             </div>
           )}
+          <button className="secondary" type="button" onClick={addLine} disabled={!selectedProduct || !requestedQuantity || hasStockWarning}>
+            Agregar producto
+          </button>
+
+          <div className="order-lines">
+            {!(form.lineas || []).length && <div className="empty">Agrega uno o varios productos al pedido.</div>}
+            {(form.lineas || []).map((line) => (
+              <article className="record" key={line.producto_id}>
+                <div>
+                  <strong>{line.producto_nombre}</strong>
+                  <p>{line.cantidad} x {money(line.precio)} - {money(line.total)}</p>
+                </div>
+                <div className="actions">
+                  <button className="secondary danger-button" type="button" onClick={() => removeLine(line.producto_id)}>
+                    Quitar
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+
           <div className="split">
-            <label>
-              Cantidad
-              <input type="number" value={form.cantidad} onChange={(event) => setForm("pedido", "cantidad", event.target.value)} required />
-            </label>
             <label>
               Estado
               <input value={form.estado} onChange={(event) => setForm("pedido", "estado", event.target.value)} required />
             </label>
+            <div className="total-box">
+              <span>Total pedido</span>
+              <strong>{money(orderTotal)}</strong>
+            </div>
           </div>
-          <button className="primary" disabled={hasStockWarning}>Guardar pedido</button>
+          <button className="primary" disabled={!(form.lineas || []).length}>Guardar pedido</button>
         </form>
       </Panel>
       <Panel title="Pedidos enlazables">
@@ -1200,7 +1274,6 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder }) {
     </div>
   );
 }
-
 function Inventory({ data, form, setForm, insertRecord }) {
   function submit(event) {
     event.preventDefault();
@@ -1685,7 +1758,7 @@ function compact(row) {
     .filter(([key, value]) => !["id", "created_at", "updated_at"].includes(key) && value !== null && value !== "")
     .slice(0, 4)
     .map(([key, value]) => `${labelize(key)}: ${value}`)
-    .join(" · ");
+    .join(" Â· ");
 }
 
 function labelize(key) {
@@ -1693,3 +1766,8 @@ function labelize(key) {
 }
 
 createRoot(document.getElementById("root")).render(<App />);
+
+
+
+
+
