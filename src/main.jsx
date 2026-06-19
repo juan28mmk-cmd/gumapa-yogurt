@@ -264,7 +264,7 @@ function App() {
     const totalAmount = lines.reduce((total, line) => total + Number(line.total || 0), 0);
     const summary = lines.map((line) => `${line.cantidad} x ${line.producto_nombre}`).join(" - ");
 
-    const { error } = await supabase.from("pedidos").insert({
+    const { data: order, error } = await supabase.from("pedidos").insert({
       cliente_id: client.id,
       cliente_nombre: client.nombre,
       fecha: form.fecha || new Date().toISOString().slice(0, 10),
@@ -273,7 +273,7 @@ function App() {
       cantidad: totalQuantity,
       monto: totalAmount,
       estado: form.estado
-    });
+    }).select().single();
 
     if (error) {
       setNotice(error.message);
@@ -283,6 +283,7 @@ function App() {
     const inventoryRows = lines.map((line) => ({
       producto_id: line.producto_id,
       producto_nombre: line.producto_nombre,
+      pedido_id: order.id,
       tipo: "Salida",
       cantidad: line.cantidad,
       motivo: `Venta a ${client.nombre}`
@@ -333,6 +334,16 @@ function App() {
       }
     }
 
+
+    const { error: inventoryError } = await supabase
+      .from("inventario_movimientos")
+      .delete()
+      .eq("pedido_id", order.id);
+
+    if (inventoryError) {
+      setNotice(inventoryError.message);
+      return;
+    }
     const { data: deletedRows, error } = await supabase.from("pedidos").delete().eq("id", order.id).select("id");
     if (error) {
       setNotice(error.message);
