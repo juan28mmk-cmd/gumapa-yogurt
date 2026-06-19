@@ -62,7 +62,7 @@ const examples = {
 const initialForms = {
   cliente: { nombre: "", telefono: "", zona: "", tipo: "Minorista" },
   producto: { nombre: "", categoria: "Yogurt", precio: "", stock_minimo: "0", stock_inicial: "0", lote: "" },
-  pedido: { cliente_id: "", cliente_nombre: "", producto_id: "", producto_nombre: "", cantidad: "", estado: "Pendiente", lineas: [] },
+  pedido: { fecha: new Date().toISOString().slice(0, 10), cliente_id: "", cliente_nombre: "", producto_id: "", producto_nombre: "", cantidad: "", estado: "Pendiente", lineas: [] },
   inventario: {
     producto_id: "",
     producto_nombre: "",
@@ -193,7 +193,8 @@ function App() {
         nombre: form.nombre,
         categoria: form.categoria,
         precio: Number(form.precio),
-        stock_minimo: Number(form.stock_minimo)
+        stock_minimo: Number(form.stock_minimo),
+        lote: form.lote
       })
       .select()
       .single();
@@ -266,6 +267,7 @@ function App() {
     const { error } = await supabase.from("pedidos").insert({
       cliente_id: client.id,
       cliente_nombre: client.nombre,
+      fecha: form.fecha || new Date().toISOString().slice(0, 10),
       producto_id: lines[0]?.producto_id || null,
       producto_nombre: summary,
       cantidad: totalQuantity,
@@ -1308,7 +1310,7 @@ function Products({ data, form, setForm, createProduct, deleteProduct }) {
               <article className="record" key={product.id}>
                 <div>
                   <strong>{product.nombre}</strong>
-                  <p>{product.categoria} - {money(product.precio)} - Stock: {stock}</p>
+                  <p>{product.categoria} - {money(product.precio)} - Lote: {product.lote || "Sin lote"} - Stock: {stock}</p>
                 </div>
                 <div className="actions">
                   <span className={`pill ${tone}`}>{isEmpty ? "Sin stock" : isLow ? "Bajo" : "Disponible"}</span>
@@ -1391,6 +1393,10 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder, dele
     <div className="grid two">
       <Panel title="Nuevo pedido">
         <form className="form" onSubmit={createOrder}>
+          <label>
+            Fecha
+            <input type="date" value={form.fecha} onChange={(event) => setForm("pedido", "fecha", event.target.value)} required />
+          </label>
           <label>
             Cliente
             <select value={form.cliente_id} onChange={(event) => selectClient(event.target.value)} required>
@@ -2017,6 +2023,15 @@ function Accounting({ data, totals, forms, setForm, createAccountingEntry, inser
 }
 
 function Reports({ data, totals }) {
+  const [selectedDate, setSelectedDate] = useState(new Date().toISOString().slice(0, 10));
+  const dailyOrders = data.pedidos.filter((order) => orderDate(order) === selectedDate);
+  const dailyPaidOrders = dailyOrders.filter((order) => {
+    const invoice = data.facturas.find((item) => item.pedido_id === order.id);
+    return invoice?.estado === "Pagada";
+  });
+  const dailySales = sum(dailyOrders, "monto");
+  const dailyPaidSales = sum(dailyPaidOrders, "monto");
+
   return (
     <>
       <Kpis
@@ -2024,9 +2039,40 @@ function Reports({ data, totals }) {
           ["Ventas", money(totals.totalFacturado)],
           ["Cobro pendiente", money(totals.pendiente)],
           ["Utilidad", money(totals.utilidad)],
-          ["Cuentas", data.cuentas.length]
+          ["Pagado del dia", money(dailyPaidSales)]
         ]}
       />
+      <div className="grid two">
+        <Panel title="Ventas diarias">
+          <form className="form">
+            <label>
+              Fecha
+              <input type="date" value={selectedDate} onChange={(event) => setSelectedDate(event.target.value)} />
+            </label>
+          </form>
+          <div className="statement">
+            <span>Pedidos realizados</span>
+            <strong>{dailyOrders.length}</strong>
+            <span>Ventas del dia</span>
+            <strong>{money(dailySales)}</strong>
+            <span>Ventas pagadas</span>
+            <strong>{money(dailyPaidSales)}</strong>
+          </div>
+        </Panel>
+        <Panel title="Pedidos pagados del dia">
+          {!dailyPaidOrders.length && <div className="empty">No hay pedidos pagados para esta fecha.</div>}
+          <div className="rows">
+            {dailyPaidOrders.map((order) => (
+              <Record
+                key={order.id}
+                title={order.cliente_nombre || "Pedido"}
+                detail={`${order.producto_nombre || "Productos"} - ${money(order.monto || 0)}`}
+                status="Pagado"
+              />
+            ))}
+          </div>
+        </Panel>
+      </div>
       <Panel title="Estado rapido de resultados">
         <div className="statement">
           <span>Ingresos</span>
@@ -2041,6 +2087,9 @@ function Reports({ data, totals }) {
   );
 }
 
+function orderDate(order) {
+  return order.fecha || order.created_at?.slice(0, 10) || "";
+}
 function Kpis({ items }) {
   return (
     <section className="kpis">

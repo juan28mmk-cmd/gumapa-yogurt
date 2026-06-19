@@ -1,4 +1,6 @@
 alter table pedidos add column if not exists monto numeric(12,2) not null default 0;
+alter table pedidos add column if not exists fecha date not null default current_date;
+alter table productos add column if not exists lote text;
 alter table entregas add column if not exists pedido_id uuid references pedidos(id);
 
 alter table inventario_movimientos add column if not exists lote text;
