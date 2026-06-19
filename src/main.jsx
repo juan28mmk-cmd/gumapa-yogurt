@@ -1478,7 +1478,7 @@ function Orders({ data, form, setForm, createOrder, createInvoiceFromOrder, dele
             <article className="record" key={order.id}>
               <div>
                 <strong>{order.cliente_nombre || "Pedido"}</strong>
-                <p>{compact(order)}</p>
+                <p>{orderDetail(order)}</p>
               </div>
               <div className="actions compact-actions">
                 <button className="secondary" type="button" onClick={() => createInvoiceFromOrder(order)}>
@@ -2087,6 +2087,16 @@ function Reports({ data, totals }) {
   );
 }
 
+function orderDetail(order) {
+  return [
+    `Fecha: ${orderDate(order) || "Sin fecha"}`,
+    `Cliente: ${order.cliente_nombre || "Sin cliente"}`,
+    `Productos: ${order.producto_nombre || "Sin productos"}`,
+    `Cantidad: ${order.cantidad || 0}`,
+    `Total: ${money(order.monto || 0)}`,
+    `Estado: ${order.estado || "Pendiente"}`
+  ].join(" - ");
+}
 function orderDate(order) {
   return order.fecha || order.created_at?.slice(0, 10) || "";
 }
